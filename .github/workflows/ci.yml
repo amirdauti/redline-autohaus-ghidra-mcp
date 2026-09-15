@@ -42,13 +42,16 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 45
     env:
-      GHIDRA_INSTALL_DIR: ${{ runner.tool_cache }}/redline-ghidra/ghidra_12.1.3_PUBLIC
       GHIDRA_RELEASE_SHA256: 93a5d11a9ad510622acaaf908c556a7b9b764d338e78a7567f3689bf5081fd54
-      NATIVE_WORK_ROOT: ${{ runner.temp }}/ghidra-mcp-live
     steps:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
+      - name: Configure native directories
+        shell: pwsh
+        run: |
+          "GHIDRA_INSTALL_DIR=$(Join-Path $env:RUNNER_TOOL_CACHE 'redline-ghidra/ghidra_12.1.3_PUBLIC')" >> $env:GITHUB_ENV
+          "NATIVE_WORK_ROOT=$(Join-Path $env:RUNNER_TEMP 'ghidra-mcp-live')" >> $env:GITHUB_ENV
       - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
@@ -116,6 +119,9 @@ jobs:
               }
             }
           }
+      - name: Exercise native GUI adapter and bridge guards
+        shell: pwsh
+        run: ./scripts/test-gui.ps1 -GhidraHome $env:GHIDRA_INSTALL_DIR -JavaHome $env:JAVA_HOME -Server (Join-Path $env:GITHUB_WORKSPACE 'target/release/ghidra-mcp.exe') -WorkRoot (Join-Path $env:NATIVE_WORK_ROOT 'gui')
       - name: Upload synthetic acceptance evidence on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -127,3 +133,6 @@ jobs:
             ${{ env.NATIVE_WORK_ROOT }}/ci-launch.json
             ${{ env.NATIVE_WORK_ROOT }}/mailbox/logs/
             ${{ env.NATIVE_WORK_ROOT }}/work/acceptance-*.json
+            ${{ env.NATIVE_WORK_ROOT }}/gui/**/gui-native-report.json
+            ${{ env.NATIVE_WORK_ROOT }}/gui/**/gui-mcp-transcript.json
+            ${{ env.NATIVE_WORK_ROOT }}/gui/**/gui.*.log

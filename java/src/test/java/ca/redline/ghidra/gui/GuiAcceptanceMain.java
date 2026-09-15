@@ -110,13 +110,13 @@ public final class GuiAcceptanceMain {
             if (!client.get("success").getAsBoolean()) throw new IllegalStateException("GUI MCP client failed; see transcript");
             onEdt(() -> {
                 Program current = tool.getService(ProgramManager.class).getCurrentProgram();
-                if (current == null || !current.getName().equals("Original")) throw new IllegalStateException("GUI did not finish on Original");
+                if (current == null || !current.getDomainFile().getPathname().equals("/Original")) throw new IllegalStateException("GUI did not finish on /Original");
                 ProgramLocation location = plugin.getProgramLocation();
                 if (location == null || location.getProgram() != current || location.getAddress().getOffset() != 0x400010L) {
                     throw new IllegalStateException("Actual CodeBrowser cursor did not reach 0x00400010");
                 }
                 report.addProperty("actual_cursor", location.getAddress().toString());
-                report.addProperty("selected_program", current.getName());
+                report.addProperty("selected_program", current.getDomainFile().getPathname());
                 return null;
             });
             stopAndAwaitBridge();
@@ -126,7 +126,7 @@ public final class GuiAcceptanceMain {
                 JsonArray names = new JsonArray();
                 for (Program program : programs) {
                     if (program.isClosed()) throw new IllegalStateException("Bridge stop closed a GUI-owned program");
-                    names.add(program.getName());
+                    names.add(program.getDomainFile().getPathname());
                 }
                 report.add("gui_programs_retained_after_bridge_stop", names);
                 return null;

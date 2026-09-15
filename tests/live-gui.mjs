@@ -83,7 +83,7 @@ try {
   await call('go_to', { expected_program_id: second.id, address: 'ram:00400020' });
   await call('save_program', { expected_program_id: second.id });
   const selected = await call('select_program', { expected_project_id: project.id, program_path: '/Original' });
-  assert.equal(selected.name, 'Original'); assert.equal(selected.source_sha256, sha(original));
+  assert.equal(selected.program_path, '/Original'); assert.equal(selected.source_sha256, sha(original));
   const symbols = await call('list_symbols', { expected_program_id: selected.id, query: 'gui_synthetic_marker' });
   assert(JSON.stringify(symbols).includes('gui_synthetic_marker'));
   await call('go_to', { expected_program_id: selected.id, address: 'ram:00400010' });

@@ -29,7 +29,9 @@ Rust tests run the actual MCP stdio server with a synthetic mailbox peer. They c
 
 ## GUI acceptance
 
-The extension compiles against the installed Ghidra API. A separate native GUI harness uses an isolated project and real CodeBrowser services to check the GUI adapter. Results are recorded after that harness completes; compilation alone is not a claim of live GUI acceptance.
+The extension passed a separate native GUI harness using an isolated project, the actual RedlineMcpPlugin, ProgramManagerPlugin, CodeBrowser and GoToService. MCP calls imported two synthetic versions, switched programs, rejected stale navigation identities, added labels/comments, saved, and navigated. The Java harness independently verified the CodeBrowser cursor, selected Original, and retention of both GUI programs after stopping the bridge. Only the harness-owned tool/project were closed, with no unsaved changes left at cleanup.
+
+The harness uses the real plugin and GUI services with a hidden test window. It does not automate the extension-installation dialog or configuration/menu clicks. Run `scripts/test-gui.ps1` for this test and the native Java guard harness.
 
 ## Scope
 

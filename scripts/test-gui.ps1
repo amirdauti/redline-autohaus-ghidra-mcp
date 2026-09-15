@@ -18,11 +18,15 @@ $work = Join-Path ([IO.Path]::GetFullPath($WorkRoot)) ('gui-' + [guid]::NewGuid(
 $classes = Join-Path $work 'harness-classes'
 New-Item -ItemType Directory -Path $classes -Force | Out-Null
 $classpath = (@($build.jar) + $config.Jars) -join [IO.Path]::PathSeparator
-$source = Join-Path $repo 'java/src/test/java/ca/redline/ghidra/gui/GuiAcceptanceMain.java'
+$sources = @((Join-Path $repo 'java/src/test/java/ca/redline/ghidra/gui/GuiAcceptanceMain.java'), (Join-Path $repo 'java/src/test/java/ca/redline/ghidra/BridgeGuardsTest.java'))
 $compileArgs = Join-Path $work 'javac.args'
-Write-JavaArgumentFile $compileArgs @('--release', $config.JavaRelease, '-proc:none', '-encoding', 'UTF-8', '-classpath', $classpath, '-d', $classes, $source)
+Write-JavaArgumentFile $compileArgs (@('--release', $config.JavaRelease, '-proc:none', '-encoding', 'UTF-8', '-classpath', $classpath, '-d', $classes) + $sources)
 & $config.Javac ('@' + $compileArgs)
 if ($LASTEXITCODE -ne 0) { throw 'GUI harness native compilation failed.' }
+$guardArgs = Join-Path $work 'guard-test.args'
+Write-JavaArgumentFile $guardArgs @('-classpath', ($classes + [IO.Path]::PathSeparator + $classpath), 'ca.redline.ghidra.BridgeGuardsTest')
+& $config.Java ('@' + $guardArgs)
+if ($LASTEXITCODE -ne 0) { throw 'Bridge guard checks failed.' }
 $mailbox = Join-Path $work 'mailbox'
 $arguments = @('-Xmx2048m', '-Xshare:off', '-Djava.awt.headless=false', '-Dfile.encoding=UTF-8', '-Duser.language=en', '-Duser.country=US',
     '-Djava.system.class.loader=ghidra.GhidraClassLoader', '--enable-native-access=ALL-UNNAMED',
@@ -34,7 +38,7 @@ Write-JavaArgumentFile $argumentFile $arguments
 $stdout = Join-Path $work 'gui.stdout.log'
 $stderr = Join-Path $work 'gui.stderr.log'
 $process = Start-Process -FilePath $config.Java -ArgumentList ('"@' + $argumentFile + '"') -WindowStyle Hidden -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
-$failed = $false
+$processHandle = $process.Handle # Retain the native handle so Windows PowerShell 5 can read ExitCode.
 try {
     $ready = Join-Path $work 'gui-ready.json'
     $deadline = [DateTime]::UtcNow.AddSeconds(90)
@@ -43,12 +47,13 @@ try {
     & node (Join-Path $repo 'tests/live-gui.mjs') --server $serverPath --bridge-dir $mailbox --work-dir $work
     if ($LASTEXITCODE -ne 0) { throw "GUI MCP acceptance failed. Evidence: $work" }
     if (-not $process.WaitForExit(30000)) { throw 'GUI harness did not finish cleanup within 30 seconds.' }
-    if ($process.ExitCode -ne 0) { throw "Native GUI assertions failed. Evidence: $work" }
+    $process.Refresh()
+    if ($null -eq $process.ExitCode -or $process.ExitCode -ne 0) { throw "Native GUI assertions failed or exit code unavailable. Evidence: $work" }
     $report = Get-Content -LiteralPath (Join-Path $work 'gui-native-report.json') -Raw | ConvertFrom-Json
     if (-not $report.success) { throw "Native GUI report failed. Evidence: $work" }
     $report
 }
-catch { $failed = $true; throw }
+catch { throw }
 finally {
     if (-not $process.HasExited) {
         $done = Join-Path $work 'gui-client-done.json'

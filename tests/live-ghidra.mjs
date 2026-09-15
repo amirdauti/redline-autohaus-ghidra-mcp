@@ -9,11 +9,13 @@ import assert from 'node:assert/strict';
 const args = Object.fromEntries(process.argv.slice(2).reduce((pairs,value,index,all) => {
   if(index % 2 === 0) pairs.push([value.replace(/^--/,''), all[index+1]]); return pairs;
 }, []));
-for(const required of ['server','bridge-dir','work-dir']) assert(args[required],`--${required} is required`);
+for(const required of ['bridge-dir','work-dir']) assert(args[required],`--${required} is required`);
+assert(args.server||args['launcher-config'],'--server or --launcher-config is required');
 const directory=resolve(args['work-dir']); await mkdir(directory,{recursive:true});
 const stamp=randomUUID(); const evidence=join(directory,`acceptance-${stamp}.json`);
 const transcript=[];const pending=new Map();let next=1,buffer='',stderr='';
-const child=spawn(resolve(args.server),['--bridge-dir',resolve(args['bridge-dir']),'--timeout-ms','45000'],{stdio:['pipe','pipe','pipe'],windowsHide:true});
+const launch=args['launcher-config']?JSON.parse(await readFile(args['launcher-config'],'utf8')):{command:resolve(args.server),args:['--bridge-dir',resolve(args['bridge-dir']),'--timeout-ms','45000']};
+const child=spawn(launch.command,launch.args,{stdio:['pipe','pipe','pipe'],windowsHide:true});
 child.stderr.on('data',chunk=>{stderr+=chunk;});
 child.stdout.on('data',chunk=>{
   buffer+=chunk;let newline;
