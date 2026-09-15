@@ -1,0 +1,7 @@
+# Start the Java bridge first. Replace both absolute paths.
+[mcp_servers.ghidra]
+command = 'C:\tools\ghidra-mcp\ghidra-mcp.exe'
+args = ['--bridge-dir', 'C:\GhidraWork\mailbox', '--timeout-ms', '45000']
+startup_timeout_sec = 20
+tool_timeout_sec = 60
+
