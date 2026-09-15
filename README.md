@@ -83,11 +83,20 @@ Merge [the example configuration](examples/codex-ghidra.toml) into your Codex co
 ```toml
 [mcp_servers.ghidra]
 command = 'C:\tools\ghidra-mcp\ghidra-mcp.exe'
-args = ['--bridge-dir', 'C:\GhidraWork\mailbox', '--timeout-ms', '45000']
+args = ['--bridge-dir', 'C:\GhidraWork\mailbox', '--launch-config', 'C:\GhidraWork\launch.json', '--timeout-ms', '45000']
+startup_timeout_sec = 75
 tool_timeout_sec = 60
 ```
 
-Start the bridge before calling tools. `--doctor` prints a single JSON status and exits; normal execution reserves stdout for MCP messages and diagnostics for stderr.
+`--doctor` prints a single JSON status and exits; normal execution reserves stdout for MCP messages and diagnostics for stderr.
+
+### Automatic background startup on Windows
+
+Add `--launch-config C:\GhidraWork\launch.json` to the server arguments to start the native bridge when needed. Rust retains the MCP standard streams; the setup helper receives no MCP input. This also works with `--doctor`. Increase the MCP `startup_timeout_sec` to 75 for cold Ghidra startup.
+
+Create the launch file from [the example](examples/launch.json) with absolute paths. Its `bridge_dir` must match `--bridge-dir`. The launcher reuses a running bridge and rejects pending state after an interrupted exchange. The Java process stays alive when a client disconnects, so unsaved analysis is retained in the running process. Saving still requires `ghidra_save_program`.
+
+Keep `start-config.ps1`, `start-bridge.ps1`, and `common.ps1` together in the configured scripts directory. Omit `--launch-config` when managing bridge startup yourself or connecting to the GUI extension.
 
 ## WinOLS interoperability
 

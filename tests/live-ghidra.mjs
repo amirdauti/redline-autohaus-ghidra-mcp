@@ -27,6 +27,13 @@ child.stdout.on('data',chunk=>{
 child.on('error',failAll);child.on('exit',code=>failAll(new Error(`MCP exited ${code}: ${stderr.slice(-2000)}`)));
 function failAll(error){for(const request of pending.values()){clearTimeout(request.timer);request.reject(error);}pending.clear();}
 function rpc(method,params){return new Promise((resolve,reject)=>{const id=next++;const timer=setTimeout(()=>{pending.delete(id);reject(new Error(`RPC timeout: ${method}`));},60000);pending.set(id,{resolve,reject,timer});child.stdin.write(JSON.stringify({jsonrpc:'2.0',id,method,params})+'\n');});}
+async function closeMcp(){
+  await new Promise((resolve,reject)=>{
+    const timer=setTimeout(()=>reject(new Error('MCP did not exit and close its standard streams within 5 seconds; a descendant may have inherited client handles')),5000);
+    child.once('close',code=>{clearTimeout(timer);code===0?resolve():reject(new Error(`MCP shutdown exited ${code}`));});
+    child.stdin.end();
+  });
+}
 async function call(operation,parameters={},expectError=false){
   const response=await rpc('tools/call',{name:`ghidra_${operation}`,arguments:parameters});
   transcript.push({operation,parameters,response});await writeFile(evidence,JSON.stringify({state:'running',transcript},null,2));
@@ -120,7 +127,11 @@ try{
   await call('go_to',{expected_program_id:reopenedProgram.id,address:'ram:00400000'},true);
   await call('close_project',{expected_project_id:reopened.id});
   assert.equal(sha(await readFile(originalFile)),sha(bytes));assert.equal(sha(await readFile(modifiedFile)),sha(modified));
+  await closeMcp();
   await writeFile(evidence,JSON.stringify({state:'passed',ghidra:status,transcript},null,2));
   console.log(`Native acceptance passed. Evidence: ${evidence}`);
 }catch(error){await writeFile(evidence,JSON.stringify({state:'failed',error:String(error),stderr,transcript},null,2));console.error(`Evidence: ${evidence}`);throw error;}
-finally{child.stdin.end();await new Promise(resolve=>{const timer=setTimeout(()=>{child.kill();resolve();},3000);child.once('exit',()=>{clearTimeout(timer);resolve();});});}
+finally{
+  if(child.exitCode===null){child.stdin.end();await new Promise(resolve=>{const timer=setTimeout(()=>{child.kill();resolve();},3000);child.once('exit',()=>{clearTimeout(timer);resolve();});});}
+  child.stdin.destroy();child.stdout.destroy();child.stderr.destroy();
+}

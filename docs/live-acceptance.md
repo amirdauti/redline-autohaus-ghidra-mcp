@@ -21,9 +21,13 @@ The synthetic TriCore import tests language/compiler selection, addressing and b
 
 The cancellation test accepts a job that finishes before cancellation arrives; a requested cancellation does not make partial analysis disappear. Save remains explicit. This test does not prove every analyzer responds promptly to cancellation.
 
+Windows automatic startup also passed the full native test from a stopped bridge. The Rust process launched Ghidra, completed the MCP handshake and analysis workflow, then exited with both standard output streams closed while Java remained running. A new client reused that bridge. CI repeats cold startup and connection reuse.
+
 ## Transport and native guard checks
 
 Rust tests run the actual MCP stdio server with a synthetic mailbox peer. They cover schema validation, all tool dispatches, locking, deadlines, malformed/partial/oversized responses, identity mismatches, and preservation of uncertain outcomes. They are not native Ghidra acceptance.
+
+Windows startup regressions keep a synthetic descendant alive with inherited helper pipes. They verify readiness without waiting for pipe EOF, then require MCP process exit and stdout/stderr EOF while that descendant still runs. The native test also requires clean client shutdown within five seconds.
 
 `BridgeGuardsTest.java` exercises real Java parsing, validation and OS file locks, including duplicate JSON keys, stale state and retained ownership after stop requests. It does not substitute mocked Ghidra functions.
 

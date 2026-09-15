@@ -94,7 +94,7 @@ jobs:
           rustup show
           cargo build --locked --release
           if ($LASTEXITCODE -ne 0) { throw 'Rust release build failed' }
-      - name: Exercise native synthetic project lifecycle and analysis
+      - name: Exercise automatic startup and native project lifecycle
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -103,14 +103,33 @@ jobs:
           New-Item -ItemType Directory -Path $work -Force | Out-Null
           $bridgeProcess = $null
           try {
-            $launch = ./scripts/start-bridge.ps1 -GhidraHome $env:GHIDRA_INSTALL_DIR -JavaHome $env:JAVA_HOME -Mailbox $mailbox -ProjectRoot $work -ImportRoot @($work)
-            $launch | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $env:NATIVE_WORK_ROOT 'ci-launch.json') -Encoding utf8
-            $bridgeProcess = Get-Process -Id $launch.pid -ErrorAction Stop
             $server = Join-Path $env:GITHUB_WORKSPACE 'target/release/ghidra-mcp.exe'
-            node tests/live-ghidra.mjs --server $server --bridge-dir $mailbox --work-dir $work
+            $build = Get-Content -LiteralPath 'dist/latest-build.json' -Raw | ConvertFrom-Json
+            $launchConfig = Join-Path $env:NATIVE_WORK_ROOT 'ci-launch.json'
+            @{
+              launcher_script = Join-Path $env:GITHUB_WORKSPACE 'scripts/start-config.ps1'
+              ghidra_home = $env:GHIDRA_INSTALL_DIR
+              java_home = $env:JAVA_HOME
+              adapter_jar = $build.jar
+              bridge_dir = $mailbox
+              project_root = $work
+              import_roots = @($work)
+            } | ConvertTo-Json | Set-Content -LiteralPath $launchConfig -Encoding utf8NoBOM
+            $clientConfig = Join-Path $env:NATIVE_WORK_ROOT 'ci-client.json'
+            @{ command = $server; args = @('--bridge-dir', $mailbox, '--launch-config', $launchConfig) } |
+              ConvertTo-Json | Set-Content -LiteralPath $clientConfig -Encoding utf8NoBOM
+            node tests/live-ghidra.mjs --launcher-config $clientConfig --bridge-dir $mailbox --work-dir $work
             if ($LASTEXITCODE -ne 0) { throw 'Native Ghidra acceptance failed' }
+            & $server --bridge-dir $mailbox --launch-config $launchConfig --doctor
+            if ($LASTEXITCODE -ne 0) { throw 'Reuse of the existing native bridge failed' }
           }
           finally {
+            $recordFile = Get-ChildItem -LiteralPath (Join-Path $mailbox 'logs') -Filter '*.launch.json' -ErrorAction SilentlyContinue |
+              Sort-Object LastWriteTime -Descending | Select-Object -First 1
+            if ($recordFile) {
+              $record = Get-Content -LiteralPath $recordFile.FullName -Raw | ConvertFrom-Json
+              $bridgeProcess = Get-Process -Id $record.pid -ErrorAction SilentlyContinue
+            }
             if ($bridgeProcess -and -not $bridgeProcess.HasExited) {
               [IO.File]::WriteAllText((Join-Path $mailbox 'stop'), '', [Text.UTF8Encoding]::new($false))
               if (-not $bridgeProcess.WaitForExit(30000)) {

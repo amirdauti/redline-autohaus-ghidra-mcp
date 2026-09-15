@@ -488,3 +488,201 @@ async fn doctor_outputs_only_status_json_and_cli_rejects_out_of_range_timeout() 
     assert!(!output.status.success());
     assert!(output.stdout.is_empty());
 }
+
+#[tokio::test]
+async fn cli_rejects_bad_launch_configuration_before_handshake_or_launch() {
+    let root = tempfile::tempdir().unwrap();
+    let bridge = root.path().join("bridge");
+    let config_path = root.path().join("config.json");
+    fs::write(&config_path, b"{\"unexpected\":true}")
+        .await
+        .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ghidra-mcp"))
+        .arg("--bridge-dir")
+        .arg(&bridge)
+        .arg("--launch-config")
+        .arg(&config_path)
+        .arg("--doctor")
+        .output()
+        .await
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("invalid launch config"));
+
+    let script = root.path().join("not-executed.ps1");
+    let jar = root.path().join("not-loaded.jar");
+    fs::write(&script, b"throw 'Synthetic fixture must never be executed'")
+        .await
+        .unwrap();
+    fs::write(&jar, b"Synthetic path validation only")
+        .await
+        .unwrap();
+    let config = json!({"launcher_script":script,"ghidra_home":root.path(),"java_home":root.path(),"adapter_jar":jar,"bridge_dir":root.path(),"project_root":root.path(),"import_roots":[root.path()]});
+    fs::write(&config_path, serde_json::to_vec(&config).unwrap())
+        .await
+        .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ghidra-mcp"))
+        .arg("--bridge-dir")
+        .arg(&bridge)
+        .arg("--launch-config")
+        .arg(&config_path)
+        .arg("--doctor")
+        .output()
+        .await
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("bridge_dir must match"));
+    assert!(!bridge.join("client.pending").exists());
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn launch_config_skips_launch_when_native_lock_is_already_held() {
+    use fs2::FileExt;
+    let root = tempfile::tempdir().unwrap();
+    let native = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(root.path().join("bridge.lock"))
+        .unwrap();
+    native.try_lock_exclusive().unwrap();
+    let script = root.path().join("not-executed.ps1");
+    let jar = root.path().join("not-loaded.jar");
+    fs::write(&script, b"throw 'Synthetic fixture must never be executed'")
+        .await
+        .unwrap();
+    fs::write(&jar, b"Synthetic path validation only")
+        .await
+        .unwrap();
+    let config = json!({"launcher_script":script,"ghidra_home":root.path(),"java_home":root.path(),"adapter_jar":jar,"bridge_dir":root.path(),"project_root":root.path(),"import_roots":[root.path()]});
+    let config_path = root.path().join("config.json");
+    fs::write(&config_path, serde_json::to_vec(&config).unwrap())
+        .await
+        .unwrap();
+    let (stop, task, calls) = peer(root.path()).await;
+    let output = timeout(
+        RESPONSE_TIMEOUT,
+        Command::new(env!("CARGO_BIN_EXE_ghidra-mcp"))
+            .arg("--bridge-dir")
+            .arg(root.path())
+            .arg("--launch-config")
+            .arg(config_path)
+            .arg("--doctor")
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(result["version"], "synthetic-transport-fixture");
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    stop.send(true).unwrap();
+    task.await.unwrap();
+    drop(native);
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn cold_mcp_streams_close_while_the_bridge_grandchild_remains_running() {
+    use tokio::io::AsyncReadExt;
+    let root = tempfile::tempdir().unwrap();
+    let script = root.path().join("launcher.ps1");
+    let jar = root.path().join("synthetic.jar");
+    fs::write(&jar, b"Synthetic path fixture; no Java process is launched")
+        .await
+        .unwrap();
+    fs::write(root.path().join("grandchild.ps1"), r#"
+param([string]$Root)
+[IO.File]::WriteAllText((Join-Path $Root 'child-ready'), 'ready')
+$watch = [Diagnostics.Stopwatch]::StartNew()
+while (-not [IO.File]::Exists((Join-Path $Root 'release-child')) -and $watch.Elapsed.TotalSeconds -lt 45) {
+    Start-Sleep -Milliseconds 10
+}
+[IO.File]::WriteAllText((Join-Path $Root 'child-finished'), 'finished')
+"#).await.unwrap();
+    fs::write(&script,r#"
+param([string]$ConfigPath)
+$ErrorActionPreference = 'Stop'
+$root = [IO.Path]::GetDirectoryName($ConfigPath)
+$info = New-Object Diagnostics.ProcessStartInfo
+$info.FileName = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+$info.Arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + (Join-Path $root 'grandchild.ps1') + '" -Root "' + $root + '"'
+$info.UseShellExecute = $false
+$info.CreateNoWindow = $true
+$child = [Diagnostics.Process]::Start($info)
+$watch = [Diagnostics.Stopwatch]::StartNew()
+while (-not [IO.File]::Exists((Join-Path $root 'child-ready'))) {
+    if ($watch.Elapsed.TotalSeconds -gt 15) { throw 'Synthetic grandchild did not start' }
+    Start-Sleep -Milliseconds 10
+}
+[Console]::Out.WriteLine('{"state":"ready"}')
+"#).await.unwrap();
+    let config = json!({"launcher_script":script,"ghidra_home":root.path(),"java_home":root.path(),"adapter_jar":jar,"bridge_dir":root.path(),"project_root":root.path(),"import_roots":[root.path()]});
+    let config_path = root.path().join("config.json");
+    fs::write(&config_path, serde_json::to_vec(&config).unwrap())
+        .await
+        .unwrap();
+    let mut server = Command::new(env!("CARGO_BIN_EXE_ghidra-mcp"))
+        .arg("--bridge-dir")
+        .arg(root.path())
+        .arg("--launch-config")
+        .arg(config_path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let mut input = server.stdin.take().unwrap();
+    let mut output = BufReader::new(server.stdout.take().unwrap()).lines();
+    let mut errors = server.stderr.take().unwrap();
+    let result: Result<(), String> = async {
+        let init = json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"synthetic-cold-stdio","version":"1"}}});
+        let mut bytes = serde_json::to_vec(&init).unwrap(); bytes.push(b'\n');
+        input.write_all(&bytes).await.map_err(|e| e.to_string())?;
+        input.flush().await.map_err(|e| e.to_string())?;
+        let line = timeout(RESPONSE_TIMEOUT,output.next_line()).await.map_err(|_| "cold MCP handshake timed out")?
+            .map_err(|e|e.to_string())?.ok_or("MCP closed before initialization")?;
+        let initialized: Value = serde_json::from_str(&line).map_err(|e|e.to_string())?;
+        if initialized["result"]["serverInfo"]["name"] != "ghidra-mcp" { return Err(format!("invalid initialization: {initialized}")); }
+        input.write_all(b"{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}\n").await.map_err(|e|e.to_string())?;
+        input.flush().await.map_err(|e|e.to_string())?;
+        drop(input);
+        let status = timeout(RESPONSE_TIMEOUT,server.wait()).await.map_err(|_| "MCP did not exit after stdin closed")?.map_err(|e|e.to_string())?;
+        if !status.success() { return Err(format!("MCP exited with {status}")); }
+        let trailing = timeout(Duration::from_secs(5),output.next_line()).await.map_err(|_| "MCP stdout remained inherited after Rust exited")?.map_err(|e|e.to_string())?;
+        if trailing.is_some() { return Err("unexpected trailing MCP stdout".into()); }
+        let mut stderr = Vec::new();
+        timeout(Duration::from_secs(5),errors.read_to_end(&mut stderr)).await.map_err(|_| "MCP stderr remained inherited after Rust exited")?.map_err(|e|e.to_string())?;
+        if !stderr.is_empty() { return Err(format!("unexpected MCP stderr: {}",String::from_utf8_lossy(&stderr))); }
+        if !root.path().join("child-ready").exists() || root.path().join("child-finished").exists() {
+            return Err("synthetic bridge did not remain running through MCP shutdown".into());
+        }
+        Ok(())
+    }.await;
+    // Release our synthetic descendant even when the regression is detected. Never touch Ghidra.
+    fs::write(root.path().join("release-child"), b"release")
+        .await
+        .unwrap();
+    let cleanup = timeout(RESPONSE_TIMEOUT, async {
+        while !root.path().join("child-finished").exists() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await;
+    assert!(result.is_ok(), "{result:?}");
+    assert!(
+        cleanup.is_ok(),
+        "synthetic grandchild failed to stop after release"
+    );
+}

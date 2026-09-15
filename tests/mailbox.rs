@@ -201,23 +201,30 @@ async fn invalid_responses_poison_client_and_preserve_evidence() {
 async fn timeout_after_native_consumption_and_cancellation_block_restart() {
     for cancel in [false, true] {
         let directory = tempfile::tempdir().unwrap();
-        let mut mailbox = Mailbox::open(directory.path(), Duration::from_millis(100)).unwrap();
+        // Cancellation is controlled by native consumption, not by elapsed filesystem time.
+        // Its transport deadline is irrelevant: the future is dropped as soon as the barrier fires.
+        let deadline = if cancel {
+            Duration::from_secs(120)
+        } else {
+            Duration::from_millis(100)
+        };
+        let mut mailbox = Mailbox::open(directory.path(), deadline).unwrap();
+        let (consumed_tx, consumed_rx) = tokio::sync::oneshot::channel();
         let peer_dir = directory.path().to_path_buf();
         let peer = tokio::spawn(async move {
             request(&peer_dir).await;
             fs::remove_file(peer_dir.join("request.json"))
                 .await
                 .unwrap();
+            consumed_tx.send(()).unwrap();
         });
         if cancel {
-            assert!(
-                timeout(
-                    Duration::from_millis(50),
-                    mailbox.call("save_program", json!({}))
-                )
-                .await
-                .is_err()
-            );
+            let mut exchange = Box::pin(mailbox.call("save_program", json!({})));
+            tokio::select! {
+                consumed = consumed_rx => consumed.unwrap(),
+                result = &mut exchange => panic!("exchange finished before controlled cancellation: {result:?}"),
+            }
+            drop(exchange);
         } else {
             assert!(
                 mailbox
@@ -226,6 +233,7 @@ async fn timeout_after_native_consumption_and_cancellation_block_restart() {
                     .unwrap_err()
                     .contains("timed out")
             );
+            consumed_rx.await.unwrap();
         }
         peer.await.unwrap();
         assert!(!directory.path().join("request.json").exists());

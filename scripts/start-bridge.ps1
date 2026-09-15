@@ -35,8 +35,8 @@ $lockPath = Join-Path $mailboxPath 'bridge.lock'
 try { $probe = [IO.File]::Open($lockPath, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None) }
 catch { throw "Mailbox is owned by another bridge: $mailboxPath" }
 try {
-    $pending = @(Get-ChildItem -LiteralPath $mailboxPath -File | Where-Object {
-        $_.Name -match '^(request|response|processing)([.-]|$)'
+    $pending = @(Get-ChildItem -LiteralPath $mailboxPath | Where-Object {
+        $_.Name -eq 'client.pending' -or $_.Name -match '^(request|response|processing)([.-]|$)'
     })
     if ($pending.Count) { throw "Pending mailbox files require inspection: $($pending.Name -join ', ')" }
     $stop = Join-Path $mailboxPath 'stop'
