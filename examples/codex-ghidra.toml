@@ -1,0 +1,7 @@
+# Windows automatic startup. Replace absolute paths and configure launch.json.
+# For an already running bridge, omit --launch-config and its path.
+[mcp_servers.ghidra]
+command = 'C:\tools\ghidra-mcp\ghidra-mcp.exe'
+args = ['--bridge-dir', 'C:\GhidraWork\mailbox', '--launch-config', 'C:\GhidraWork\launch.json', '--timeout-ms', '45000']
+startup_timeout_sec = 75
+tool_timeout_sec = 60

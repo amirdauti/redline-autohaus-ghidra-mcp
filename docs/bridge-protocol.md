@@ -2,6 +2,8 @@
 
 Local single-client file mailbox. Rust owns `client.lock`; Java owns `bridge.lock`. Request file `request.json` and response file `response.json` are published by atomic rename from unique temporary files. No stale files are removed on startup. One outstanding request. Invalid/mismatched response or timeout poisons the client connection; never retry a mutation automatically. Maximum request 1 MiB, response 8 MiB. UTF-8 JSON.
 
+Before publishing a request, Rust writes and syncs `client.pending` containing its request ID and operation. It removes this durable guard only after validating and consuming a definitive response. Startup refuses an existing guard, including when Java has already consumed the request but has not finished it. A timeout, cancellation, crash, or uncertain result therefore prevents automatic reuse across client restarts. Preserve pending files for inspection; recover only after the native operation's outcome is known. Temporary filenames use `request.<uuid>.tmp` and `response.<uuid>.tmp`; unfinished temporary files also block startup.
+
 Request: `{ "protocol": 1, "id": "uuid", "operation": "status", "params": {} }`.
 Success: `{ "protocol": 1, "id": "same uuid", "ok": true, "result": {} }`.
 Failure: `{ "protocol": 1, "id": "same uuid", "ok": false, "error": { "code": "invalid_argument", "message": "..." } }`.
@@ -37,3 +39,23 @@ All MCP tools are `ghidra_` + operation. All listed keys are required unless mar
 - `go_to {expected_program_id,address}` -> GUI cursor navigation; headless returns unsupported
 
 Bridge configuration restricts create/open under project root and import under allowed import roots. User input is data. No arbitrary script, shell, firmware patch, or delete operation. GUI and headless share command semantics but GUI project lifecycle may return a clearly documented unsupported error if not safely implemented; headless lifecycle must be complete. Analysis busy guards prevent program mutation/switch/closure during a job; status and job_status remain available.
+
+## Extended analysis workflow
+
+The following operations use the same project/program identity, path, transaction and busy guards:
+
+- `get_analysis_options {expected_program_id}` -> names, types and values of current program analysis options
+- `set_analysis_options {expected_program_id,options}` -> readback; options is an object mapping existing Boolean option names to Boolean values; reject unknown or non-Boolean options
+- `cancel_analysis {job_id}` -> cancellation requested; keep job busy until native analysis actually stops
+- `set_image_base {expected_program_id,address}` -> updated program; transaction, commit rebasing, reject invalid/overflowing relocation
+- `create_memory_block {expected_program_id,name,address,size,read,write,execute}` -> uninitialized memory block readback; size1..67108864, no overlaps; permissions refer to modeled ECU memory
+- `create_instructions {expected_program_id,address,length}` -> bounded disassembly in existing initialized memory, length1..65536, never clear existing data/code; does not patch bytes
+- `create_function {expected_program_id,address,name?}` -> function detail; create from decoded instructions using native flow detection, reject duplicate entry
+- `rename_function {expected_program_id,address,name}` -> function detail; USER_DEFINED name transaction
+- `get_function {expected_program_id,address}` -> containing function, signature, parameters, callers and callees (bounded)
+- `define_data {expected_program_id,address,type_name,count}` -> readback array/scalar; type_name one of u8,s8,u16,s16,u32,s32,u64,s64,f32,f64; count1..65536; require undefined storage, no clearing code or existing data
+- `list_symbols {expected_program_id,query?,offset?,limit?}` -> matching symbols; substring filter, offset default0,limit default100 max500
+- `list_strings {expected_program_id,offset?,limit?}` -> existing defined string data, offset default0,limit default100 max500
+- `export_program {expected_program_id,path}` -> Ghidra packed program (.gzf) export, preserving analysis; output must be under project root and not exist
+
+Address/ID parameter rules match the base operations. Definition operations alter analysis metadata, not firmware bytes. These tools do not claim debugger control or arbitrary third-party plugin coverage.

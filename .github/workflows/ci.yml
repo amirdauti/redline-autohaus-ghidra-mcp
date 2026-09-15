@@ -1,0 +1,157 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    name: Rust (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Install Rust toolchain
+        run: rustup show
+      - name: Install formatting and lint components
+        run: rustup component add rustfmt clippy
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Lint
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --locked --all-targets
+
+  native-ghidra:
+    name: Native Ghidra 12.1.3 (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      GHIDRA_RELEASE_SHA256: 93a5d11a9ad510622acaaf908c556a7b9b764d338e78a7567f3689bf5081fd54
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Configure native directories
+        shell: pwsh
+        run: |
+          "GHIDRA_INSTALL_DIR=$(Join-Path $env:RUNNER_TOOL_CACHE 'redline-ghidra/ghidra_12.1.3_PUBLIC')" >> $env:GITHUB_ENV
+          "NATIVE_WORK_ROOT=$(Join-Path $env:RUNNER_TEMP 'ghidra-mcp-live')" >> $env:GITHUB_ENV
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Cache verified Ghidra release
+        id: ghidra-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.GHIDRA_INSTALL_DIR }}
+          key: windows-ghidra-12.1.3-93a5d11a9ad510622acaaf908c556a7b9b764d338e78a7567f3689bf5081fd54
+      - name: Download and verify official Ghidra release
+        if: steps.ghidra-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $archive = Join-Path $env:RUNNER_TEMP 'ghidra_12.1.3_PUBLIC_20260817.zip'
+          $url = 'https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_12.1.3_build/ghidra_12.1.3_PUBLIC_20260817.zip'
+          Invoke-WebRequest -Uri $url -OutFile $archive
+          $actual = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $env:GHIDRA_RELEASE_SHA256) { throw "Ghidra archive SHA-256 mismatch: $actual" }
+          $parent = Split-Path -Parent $env:GHIDRA_INSTALL_DIR
+          New-Item -ItemType Directory -Path $parent -Force | Out-Null
+          Expand-Archive -LiteralPath $archive -DestinationPath $parent
+      - name: Verify installed Ghidra version
+        shell: pwsh
+        run: |
+          $properties = Get-Content -LiteralPath (Join-Path $env:GHIDRA_INSTALL_DIR 'Ghidra/application.properties') -Raw
+          if ($properties -notmatch '(?m)^application.version=12\.1\.3\r?$') { throw 'Expected Ghidra 12.1.3' }
+      - name: Build native adapter
+        shell: pwsh
+        run: ./scripts/build-extension.ps1 -GhidraHome $env:GHIDRA_INSTALL_DIR -JavaHome $env:JAVA_HOME
+      - name: Build Rust release server
+        shell: pwsh
+        run: |
+          rustup show
+          cargo build --locked --release
+          if ($LASTEXITCODE -ne 0) { throw 'Rust release build failed' }
+      - name: Exercise automatic startup and native project lifecycle
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $mailbox = Join-Path $env:NATIVE_WORK_ROOT 'mailbox'
+          $work = Join-Path $env:NATIVE_WORK_ROOT 'work'
+          New-Item -ItemType Directory -Path $work -Force | Out-Null
+          $bridgeProcess = $null
+          try {
+            $server = Join-Path $env:GITHUB_WORKSPACE 'target/release/ghidra-mcp.exe'
+            $build = Get-Content -LiteralPath 'dist/latest-build.json' -Raw | ConvertFrom-Json
+            $launchConfig = Join-Path $env:NATIVE_WORK_ROOT 'ci-launch.json'
+            @{
+              launcher_script = Join-Path $env:GITHUB_WORKSPACE 'scripts/start-config.ps1'
+              ghidra_home = $env:GHIDRA_INSTALL_DIR
+              java_home = $env:JAVA_HOME
+              adapter_jar = $build.jar
+              bridge_dir = $mailbox
+              project_root = $work
+              import_roots = @($work)
+            } | ConvertTo-Json | Set-Content -LiteralPath $launchConfig -Encoding utf8NoBOM
+            $clientConfig = Join-Path $env:NATIVE_WORK_ROOT 'ci-client.json'
+            @{ command = $server; args = @('--bridge-dir', $mailbox, '--launch-config', $launchConfig) } |
+              ConvertTo-Json | Set-Content -LiteralPath $clientConfig -Encoding utf8NoBOM
+            node tests/live-ghidra.mjs --launcher-config $clientConfig --bridge-dir $mailbox --work-dir $work
+            if ($LASTEXITCODE -ne 0) { throw 'Native Ghidra acceptance failed' }
+            & $server --bridge-dir $mailbox --launch-config $launchConfig --doctor
+            if ($LASTEXITCODE -ne 0) { throw 'Reuse of the existing native bridge failed' }
+          }
+          finally {
+            $recordFile = Get-ChildItem -LiteralPath (Join-Path $mailbox 'logs') -Filter '*.launch.json' -ErrorAction SilentlyContinue |
+              Sort-Object LastWriteTime -Descending | Select-Object -First 1
+            if ($recordFile) {
+              $record = Get-Content -LiteralPath $recordFile.FullName -Raw | ConvertFrom-Json
+              $bridgeProcess = Get-Process -Id $record.pid -ErrorAction SilentlyContinue
+            }
+            if ($bridgeProcess -and -not $bridgeProcess.HasExited) {
+              [IO.File]::WriteAllText((Join-Path $mailbox 'stop'), '', [Text.UTF8Encoding]::new($false))
+              if (-not $bridgeProcess.WaitForExit(30000)) {
+                Stop-Process -InputObject $bridgeProcess -Force
+                throw 'Native bridge did not stop after the sentinel; terminated this job-owned process'
+              }
+            }
+          }
+      - name: Exercise native GUI adapter and bridge guards
+        shell: pwsh
+        run: ./scripts/test-gui.ps1 -GhidraHome $env:GHIDRA_INSTALL_DIR -JavaHome $env:JAVA_HOME -Server (Join-Path $env:GITHUB_WORKSPACE 'target/release/ghidra-mcp.exe') -WorkRoot (Join-Path $env:NATIVE_WORK_ROOT 'gui')
+      - name: Upload synthetic acceptance evidence on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-ghidra-12.1.3-failure
+          retention-days: 7
+          if-no-files-found: ignore
+          path: |
+            ${{ env.NATIVE_WORK_ROOT }}/ci-launch.json
+            ${{ env.NATIVE_WORK_ROOT }}/mailbox/logs/
+            ${{ env.NATIVE_WORK_ROOT }}/work/acceptance-*.json
+            ${{ env.NATIVE_WORK_ROOT }}/gui/**/gui-native-report.json
+            ${{ env.NATIVE_WORK_ROOT }}/gui/**/gui-mcp-transcript.json
+            ${{ env.NATIVE_WORK_ROOT }}/gui/**/gui.*.log
