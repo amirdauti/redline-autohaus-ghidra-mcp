@@ -2,7 +2,7 @@
   "launcher_script": "C:\\tools\\ghidra-mcp\\scripts\\start-config.ps1",
   "ghidra_home": "C:\\tools\\ghidra_12.1.3_PUBLIC",
   "java_home": "C:\\tools\\jdk-21",
-  "adapter_jar": "C:\\tools\\ghidra-mcp\\redline-ghidra-mcp.jar",
+  "adapter_jar": "C:\\tools\\ghidra-mcp\\RedlineGhidraMcp.jar",
   "bridge_dir": "C:\\GhidraWork\\mailbox",
   "project_root": "C:\\GhidraWork\\projects",
   "import_roots": ["C:\\GhidraWork\\inputs"]

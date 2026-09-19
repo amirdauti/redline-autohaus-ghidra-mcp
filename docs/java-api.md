@@ -18,6 +18,9 @@ Primary API documentation ships in `docs/GhidraAPI_javadoc.zip` and `docs/ghidra
 | Functions and listing | `FunctionManager.getFunctions/getFunctionContaining`, `Listing.getInstructions`, `Instruction` |
 | Decompilation | `ghidra.app.decompiler.DecompInterface.openProgram/decompileFunction/dispose`, `DecompileResults` |
 | References and metadata | `ReferenceManager.getReferencesTo/getReferencesFrom`, `SymbolTable.createLabel`, `SourceType.USER_DEFINED`, `Listing.setComment/getComment`, `CommentType.EOL` |
+| Read-only data and comments | `Listing.getDefinedDataContaining/getComment`, `Data.getDataType/getLength/getNumComponents/getComponent/getDefaultValueRepresentation`, `CommentType` |
+| Raw instruction semantics | `Listing.getInstructionAt`, `Instruction.getPcode(false)`, `PcodeOp.getMnemonic/getOutput/getInput`, `Varnode.getAddress/getOffset/getSize` |
+| GUI plugin discovery | `ghidra.util.classfinder.ClassSearcher.getClasses(Plugin.class)`, module-matching `RedlineGhidraMcp.jar` basename |
 | Metadata transactions | `Program.startTransaction/endTransaction` |
 
 ## Shared context and ownership

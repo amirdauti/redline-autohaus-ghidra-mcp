@@ -862,6 +862,69 @@ impl GhidraServer {
     }
 
     #[tool(
+        name = "ghidra_get_comments",
+        description = "Read stored EOL, pre, post, plate and repeatable comments at an address. Each comment is bounded to 8192 characters with explicit truncation reporting.",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
+    async fn get_comments(&self, Parameters(params): Parameters<AddressParams>) -> CallToolResult {
+        match self
+            .backend
+            .lock()
+            .await
+            .execute("get_comments", &params)
+            .await
+        {
+            Ok(value) => CallToolResult::structured(value),
+            Err(error) => CallToolResult::structured_error(json!({"error": error})),
+        }
+    }
+
+    #[tool(
+        name = "ghidra_get_data",
+        description = "Inspect existing defined data containing an address, its native type and bounded scalar representation, with paginated immediate components. Does not create data definitions or infer units/scaling.",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
+    async fn get_data(&self, Parameters(params): Parameters<GetDataParams>) -> CallToolResult {
+        match self.backend.lock().await.execute("get_data", &params).await {
+            Ok(value) => CallToolResult::structured(value),
+            Err(error) => CallToolResult::structured_error(json!({"error": error})),
+        }
+    }
+
+    #[tool(
+        name = "ghidra_get_pcode",
+        description = "Read raw P-code for up to 200 contiguous, already-defined instructions. Returns structured operations and varnodes; ignores flow overrides. This is not decompiler SSA and never creates instructions. Results have explicit operation/varnode bounds.",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
+    async fn get_pcode(&self, Parameters(params): Parameters<DisassembleParams>) -> CallToolResult {
+        match self
+            .backend
+            .lock()
+            .await
+            .execute("get_pcode", &params)
+            .await
+        {
+            Ok(value) => CallToolResult::structured(value),
+            Err(error) => CallToolResult::structured_error(json!({"error": error})),
+        }
+    }
+
+    #[tool(
         name = "ghidra_export_program",
         description = "Export a Ghidra packed program .gzf including analysis under the configured project root. Destination must not exist.",
         annotations(

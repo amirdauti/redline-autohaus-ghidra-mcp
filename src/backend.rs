@@ -1,17 +1,99 @@
 use crate::{
     domain::{self, Validate},
+    launch,
     mailbox::Mailbox,
 };
 use serde::Serialize;
 use serde_json::Value;
+use std::{path::PathBuf, time::Duration};
+
+mod inspection;
+
+struct ConnectionConfig {
+    directory: PathBuf,
+    launch_config: Option<PathBuf>,
+    timeout: Duration,
+}
+
+impl ConnectionConfig {
+    async fn prepare(&self, mailbox: &Mailbox, launch_uncertain: &mut bool) -> Result<(), String> {
+        mailbox.ensure_reusable()?;
+        if *launch_uncertain {
+            return Err("bridge startup outcome is uncertain; inspect the launcher logs and native process before restarting this MCP client. No automatic relaunch or request is allowed".into());
+        }
+        if let Some(config) = &self.launch_config {
+            launch::validate_config(config, &self.directory)?;
+            if !launch::bridge_running(&self.directory)? {
+                // Cancellation may leave the Java descendant alive. Only confirmed
+                // readiness clears this latch; another tool call must not relaunch.
+                *launch_uncertain = true;
+                launch::ensure_bridge(config, &self.directory).await?;
+                if !launch::bridge_running(&self.directory)? {
+                    return Err("launcher reported ready without bridge ownership; inspect native startup before restarting this MCP client".into());
+                }
+                *launch_uncertain = false;
+            }
+        }
+        if !launch::bridge_running(&self.directory)? {
+            return Err("Ghidra bridge is not running; start the headless or GUI bridge, or configure --launch-config for automatic Windows headless startup, then call ghidra_status again. No request was sent".into());
+        }
+        Ok(())
+    }
+}
 
 pub struct Backend {
-    mailbox: Mailbox,
+    mailbox: Option<Mailbox>,
+    connection_config: Option<ConnectionConfig>,
+    launch_uncertain: bool,
 }
 
 impl Backend {
     pub fn new(mailbox: Mailbox) -> Self {
-        Self { mailbox }
+        Self {
+            mailbox: Some(mailbox),
+            connection_config: None,
+            launch_uncertain: false,
+        }
+    }
+
+    /// MCP discovery must not depend on native availability or another client's
+    /// ownership. Native connection errors remain recoverable tool errors until
+    /// a request is actually dispatched; uncertain exchanges still fail closed.
+    pub fn configured(
+        directory: PathBuf,
+        launch_config: Option<PathBuf>,
+        timeout: Duration,
+    ) -> Result<Self, String> {
+        if !directory.is_absolute() {
+            return Err("bridge directory must be an absolute path".into());
+        }
+        if !(Duration::from_millis(100)..=Duration::from_secs(120)).contains(&timeout) {
+            return Err("timeout must be between 100 and 120000 milliseconds".into());
+        }
+        Ok(Self {
+            mailbox: None,
+            connection_config: Some(ConnectionConfig {
+                directory,
+                launch_config,
+                timeout,
+            }),
+            launch_uncertain: false,
+        })
+    }
+
+    async fn connected_mailbox(&mut self) -> Result<&mut Mailbox, String> {
+        if let Some(config) = &self.connection_config {
+            if let Some(mailbox) = &self.mailbox {
+                config.prepare(mailbox, &mut self.launch_uncertain).await?;
+            } else {
+                let mailbox = Mailbox::open(&config.directory, config.timeout)?;
+                config.prepare(&mailbox, &mut self.launch_uncertain).await?;
+                self.mailbox = Some(mailbox);
+            }
+        }
+        self.mailbox
+            .as_mut()
+            .ok_or_else(|| "missing mailbox configuration".into())
     }
 
     pub async fn execute<T: Validate + Serialize>(
@@ -23,7 +105,8 @@ impl Backend {
             .validate()
             .map_err(|e| format!("invalid_argument: {e}"))?;
         let params = serde_json::to_value(params).map_err(|e| e.to_string())?;
-        self.mailbox
+        self.connected_mailbox()
+            .await?
             .call_validated(operation, params.clone(), |value| {
                 validate_result(operation, &params, value)
             })
@@ -71,6 +154,9 @@ fn validate_result(operation: &str, params: &Value, value: &Value) -> Result<(),
         return Err("result must be an object".into());
     }
     match operation {
+        "get_comments" | "get_data" | "get_pcode" => {
+            inspection::validate(operation, params, value)?
+        }
         "status" => {
             if string(value, "backend", 64)? != "ghidra" {
                 return Err("unexpected backend".into());

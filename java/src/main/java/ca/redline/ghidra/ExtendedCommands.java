@@ -21,7 +21,8 @@ public final class ExtendedCommands {
     private ExtendedCommands() {}
     private static final Set<String> OPERATIONS = Set.of("get_analysis_options", "set_analysis_options",
         "set_image_base", "create_memory_block", "create_instructions", "create_function",
-        "rename_function", "get_function", "define_data", "list_symbols", "list_strings", "export_program");
+        "rename_function", "get_function", "define_data", "list_symbols", "list_strings", "export_program",
+        "get_comments", "get_data", "get_pcode");
 
     public static boolean supports(String operation) { return OPERATIONS.contains(operation); }
     public static Set<String> operations() { return OPERATIONS; }
@@ -40,6 +41,7 @@ public final class ExtendedCommands {
             case "list_symbols" -> symbols(program, p);
             case "list_strings" -> strings(program, p);
             case "export_program" -> export(program, projectRoot, p);
+            case "get_comments", "get_data", "get_pcode" -> InspectionCommands.execute(program, operation, p);
             default -> throw new IllegalArgumentException("Unsupported analysis operation: " + operation);
         };
     }
@@ -252,15 +254,15 @@ public final class ExtendedCommands {
     }
 
     private static Function function(Program program,Address address) {Function function=program.getFunctionManager().getFunctionContaining(address);if(function==null)throw invalid("No function contains address");return function;}
-    private static Address address(Program program,String value) {
+    static Address address(Program program,String value) {
         if(!value.matches("[A-Za-z_][A-Za-z0-9_]*:[0-9A-Fa-f]+"))throw invalid("Use a space-qualified hex address, such as ram:00400000");
         Address result=program.getAddressFactory().getAddress(value);if(result==null)throw invalid("Address does not exist in this language");
         if(!result.getAddressSpace().isMemorySpace()||result.getAddressSpace().getAddressableUnitSize()!=1)throw invalid("This operation requires byte-addressed memory");return result;
     }
-    private static String text(JsonObject p,String key) {if(!p.has(key)||!p.get(key).isJsonPrimitive()||!p.get(key).getAsJsonPrimitive().isString())throw invalid("Missing string: "+key);String value=p.get(key).getAsString();if(value.length()>8192||value.indexOf('\0')>=0)throw invalid("Invalid string: "+key);return value;}
-    private static int number(JsonObject p,String key,int min,int max,int fallback) {if(!p.has(key)){if(fallback<min)throw invalid("Missing integer: "+key);return fallback;}if(!p.get(key).isJsonPrimitive()||!p.get(key).getAsJsonPrimitive().isNumber()||!p.get(key).getAsString().matches("[0-9]+"))throw invalid("Invalid integer: "+key);try{int value=p.get(key).getAsBigDecimal().intValueExact();if(value<min||value>max)throw invalid("Out of range: "+key);return value;}catch(ArithmeticException|UnsupportedOperationException|NumberFormatException e){throw invalid("Invalid integer: "+key);}}
+    static String text(JsonObject p,String key) {if(!p.has(key)||!p.get(key).isJsonPrimitive()||!p.get(key).getAsJsonPrimitive().isString())throw invalid("Missing string: "+key);String value=p.get(key).getAsString();if(value.length()>8192||value.indexOf('\0')>=0)throw invalid("Invalid string: "+key);return value;}
+    static int number(JsonObject p,String key,int min,int max,int fallback) {if(!p.has(key)){if(fallback<min)throw invalid("Missing integer: "+key);return fallback;}if(!p.get(key).isJsonPrimitive()||!p.get(key).getAsJsonPrimitive().isNumber()||!p.get(key).getAsString().matches("[0-9]+"))throw invalid("Invalid integer: "+key);try{int value=p.get(key).getAsBigDecimal().intValueExact();if(value<min||value>max)throw invalid("Out of range: "+key);return value;}catch(ArithmeticException|UnsupportedOperationException|NumberFormatException e){throw invalid("Invalid integer: "+key);}}
     private static boolean bool(JsonObject p,String key) {if(!p.has(key)||!p.get(key).isJsonPrimitive()||!p.get(key).getAsJsonPrimitive().isBoolean())throw invalid("Missing Boolean: "+key);return p.get(key).getAsBoolean();}
-    private static void fields(JsonObject p,String... allowed) {Set<String> names=new HashSet<>(Arrays.asList(allowed));names.add("expected_program_id");for(String key:p.keySet())if(!names.contains(key))throw invalid("Unknown field: "+key);}
+    static void fields(JsonObject p,String... allowed) {Set<String> names=new HashSet<>(Arrays.asList(allowed));names.add("expected_program_id");for(String key:p.keySet())if(!names.contains(key))throw invalid("Unknown field: "+key);}
     private static void checkName(String name) {if(name.isBlank()||name.length()>200||name.chars().anyMatch(Character::isISOControl))throw invalid("Name must be 1..200 printable characters");}
     private static IllegalArgumentException invalid(String message) {return new IllegalArgumentException(message);}
 }

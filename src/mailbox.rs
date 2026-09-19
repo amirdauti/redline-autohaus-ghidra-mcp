@@ -93,7 +93,7 @@ impl Mailbox {
             .open(directory.join("client.lock"))
             .map_err(|e| format!("cannot open mailbox lock: {e}"))?;
         lock.try_lock_exclusive()
-            .map_err(|_| "another MCP client owns this bridge directory".to_string())?;
+            .map_err(|_| "another MCP client owns this bridge directory; disconnect that client, then call ghidra_status again. No request was sent".to_string())?;
         ensure_idle(&directory)?;
         Ok(Self {
             directory,
@@ -105,6 +105,15 @@ impl Mailbox {
 
     pub async fn call(&mut self, operation: &str, params: Value) -> Result<Value, String> {
         self.call_validated(operation, params, |_| Ok(())).await
+    }
+
+    /// Check before any launcher runs. An uncertain exchange must never trigger a
+    /// replacement bridge, even if the prior native process has disappeared.
+    pub(crate) fn ensure_reusable(&self) -> Result<(), String> {
+        if self.failed {
+            return Err("bridge connection stopped after an uncertain exchange; inspect Ghidra and recover the mailbox before restarting; do not retry mutations".into());
+        }
+        ensure_idle(&self.directory)
     }
 
     /// Result validation runs before removing either response or durable pending guard.

@@ -1,7 +1,5 @@
 use clap::Parser;
-use ghidra_mcp::{
-    backend::Backend, domain::EmptyParams, launch, mailbox::Mailbox, server::GhidraServer,
-};
+use ghidra_mcp::{backend::Backend, domain::EmptyParams, server::GhidraServer};
 use rmcp::ServiceExt;
 use std::{path::PathBuf, time::Duration};
 
@@ -45,12 +43,13 @@ fn main() {
 
 async fn run() -> Result<(), String> {
     let args = Args::parse();
-    // Hold client ownership and reject stale exchanges before a launcher could start Java.
-    let mailbox = Mailbox::open(&args.bridge_dir, Duration::from_millis(args.timeout_ms))?;
-    if let Some(config) = &args.launch_config {
-        launch::ensure_bridge(config, &args.bridge_dir).await?;
-    }
-    let mut backend = Backend::new(mailbox);
+    // Native acquisition happens on a tool call, so an offline or occupied bridge
+    // cannot tear down MCP initialization and hide the tool catalog from clients.
+    let mut backend = Backend::configured(
+        args.bridge_dir,
+        args.launch_config,
+        Duration::from_millis(args.timeout_ms),
+    )?;
     if args.doctor {
         println!(
             "{}",

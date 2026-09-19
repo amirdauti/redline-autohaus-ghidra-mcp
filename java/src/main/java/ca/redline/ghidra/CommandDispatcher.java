@@ -75,7 +75,8 @@ public final class CommandDispatcher implements AutoCloseable {
         if (!Set.of("status", "job_status", "list_languages", "cancel_analysis").contains(operation)) ensureIdle();
         if (ExtendedCommands.supports(operation)) {
             Program program = expectedProgram(params); Project project = requireProject();
-            boolean mutation = !Set.of("get_analysis_options", "get_function", "list_symbols", "list_strings").contains(operation);
+            boolean mutation = !Set.of("get_analysis_options", "get_function", "list_symbols", "list_strings",
+                "get_comments", "get_data", "get_pcode").contains(operation);
             JsonObject result;
             try { result = ExtendedCommands.execute(program, projectRoot, operation, params); }
             catch (IllegalArgumentException invalid) { throw error("invalid_argument", safeMessage(invalid)); }

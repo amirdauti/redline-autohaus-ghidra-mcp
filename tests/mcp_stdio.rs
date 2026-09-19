@@ -194,6 +194,15 @@ fn fixture_result(operation: &str, params: &Value) -> Value {
         "disassemble" => {
             json!({"address":params["address"],"instructions":[{"address":params["address"],"length":1,"mnemonic":"RET","text":"RET","bytes":[195]}]})
         }
+        "get_comments" => {
+            json!({"address":params["address"],"comments":{"eol":"Synthetic\ncomment","pre":null,"post":null,"plate":null,"repeatable":null},"truncated_types":[]})
+        }
+        "get_data" => {
+            json!({"address":params["address"],"found":false,"data":null,"components":[],"component_offset":params["component_offset"],"has_more":false})
+        }
+        "get_pcode" => {
+            json!({"address":params["address"],"pcode_kind":"raw","includes_flow_overrides":false,"instructions":[{"address":params["address"],"length":1,"mnemonic":"RET","operations":[]}],"operation_count":0,"varnode_count":0,"truncated":false,"truncation_reason":null})
+        }
         "get_references" => {
             assert_eq!(params["direction"], "to");
             json!({"address":params["address"],"direction":"to","refs":[],"truncated":false})
@@ -210,11 +219,33 @@ fn fixture_result(operation: &str, params: &Value) -> Value {
 }
 
 async fn peer(directory: &Path) -> (watch::Sender<bool>, JoinHandle<()>, Arc<AtomicUsize>) {
+    peer_with_lock(directory, true).await
+}
+
+async fn peer_with_lock(
+    directory: &Path,
+    own_lock: bool,
+) -> (watch::Sender<bool>, JoinHandle<()>, Arc<AtomicUsize>) {
+    use fs2::FileExt;
+    let native = if own_lock {
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(directory.join("bridge.lock"))
+            .unwrap();
+        file.try_lock_exclusive().unwrap();
+        Some(file)
+    } else {
+        None
+    };
     let (stop, mut stopped) = watch::channel(false);
     let root = directory.to_path_buf();
     let calls = Arc::new(AtomicUsize::new(0));
     let count = calls.clone();
     let task = tokio::spawn(async move {
+        let _native = native;
         loop {
             tokio::select! {
                 _ = stopped.changed() => break,
@@ -269,7 +300,7 @@ fn arguments(operation: &str, root: &Path) -> Value {
             p["address"] = json!("ram:00400000");
             p["count"] = json!(4);
         }
-        "disassemble" => {
+        "disassemble" | "get_pcode" => {
             p["address"] = json!("ram:00400000");
             p["count"] = json!(1);
         }
@@ -342,7 +373,10 @@ async fn executable_negotiates_all_typed_tools_and_dispatches_over_the_mailbox()
             "ghidra_disassemble",
             "ghidra_export_program",
             "ghidra_get_analysis_options",
+            "ghidra_get_comments",
+            "ghidra_get_data",
             "ghidra_get_function",
+            "ghidra_get_pcode",
             "ghidra_get_program",
             "ghidra_get_project",
             "ghidra_get_references",
@@ -384,6 +418,10 @@ async fn executable_negotiates_all_typed_tools_and_dispatches_over_the_mailbox()
             );
         }
         let name = tool["name"].as_str().unwrap();
+        if ["ghidra_get_comments", "ghidra_get_data", "ghidra_get_pcode"].contains(&name) {
+            assert_eq!(tool["annotations"]["readOnlyHint"], true);
+            assert_eq!(tool["annotations"]["destructiveHint"], false);
+        }
         let result = client
             .call(
                 name,
@@ -400,7 +438,7 @@ async fn executable_negotiates_all_typed_tools_and_dispatches_over_the_mailbox()
             assert_eq!(result["languages"][0]["compilers"][0]["id"], "default");
         }
     }
-    assert_eq!(calls.load(Ordering::SeqCst), 36);
+    assert_eq!(calls.load(Ordering::SeqCst), 39);
     client
         .tool_error(
             "ghidra_read_bytes",
@@ -408,7 +446,7 @@ async fn executable_negotiates_all_typed_tools_and_dispatches_over_the_mailbox()
             "active program changed",
         )
         .await;
-    assert_eq!(calls.load(Ordering::SeqCst), 37);
+    assert_eq!(calls.load(Ordering::SeqCst), 40);
     for (name, args) in [
         ("ghidra_status", json!({"unknown":true})),
         (
@@ -435,17 +473,29 @@ async fn executable_negotiates_all_typed_tools_and_dispatches_over_the_mailbox()
             "ghidra_define_data",
             json!({"expected_program_id":"synthetic-program","address":"ram:0","type_name":"script","count":1}),
         ),
+        (
+            "ghidra_get_data",
+            json!({"expected_program_id":"synthetic-program","address":"ram:0","component_offset":2147483648_u32}),
+        ),
+        (
+            "ghidra_get_data",
+            json!({"expected_program_id":"synthetic-program","address":"ram:0","component_limit":129}),
+        ),
+        (
+            "ghidra_get_pcode",
+            json!({"expected_program_id":"synthetic-program","address":"ram:0","count":201}),
+        ),
     ] {
         let response = client.call_raw(name, args).await;
         assert_eq!(response["result"]["isError"], true, "{response}");
     }
     assert_eq!(
         calls.load(Ordering::SeqCst),
-        37,
+        40,
         "invalid input reached native transport"
     );
     client.call("ghidra_status", json!({})).await;
-    assert_eq!(calls.load(Ordering::SeqCst), 38);
+    assert_eq!(calls.load(Ordering::SeqCst), 41);
     client.close().await;
     stop.send(true).unwrap();
     task.await.unwrap();
@@ -490,7 +540,87 @@ async fn doctor_outputs_only_status_json_and_cli_rejects_out_of_range_timeout() 
 }
 
 #[tokio::test]
-async fn cli_rejects_bad_launch_configuration_before_handshake_or_launch() {
+async fn discovery_survives_offline_bridge_and_same_client_connects_after_manual_start() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut client = Client::start(directory.path()).await;
+    let listed = client.rpc("tools/list", json!({})).await;
+    assert_eq!(listed["result"]["tools"].as_array().unwrap().len(), 39);
+    assert!(!directory.path().join("client.lock").exists());
+    client
+        .tool_error("ghidra_status", json!({}), "bridge is not running")
+        .await;
+    assert!(!directory.path().join("client.pending").exists());
+    assert!(!directory.path().join("request.json").exists());
+    let (stop, task, calls) = peer(directory.path()).await;
+    client.call("ghidra_status", json!({})).await;
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    stop.send(true).unwrap();
+    task.await.unwrap();
+    client
+        .tool_error("ghidra_status", json!({}), "bridge is not running")
+        .await;
+    assert!(!directory.path().join("client.pending").exists());
+    let (stop, task, calls) = peer(directory.path()).await;
+    client.call("ghidra_status", json!({})).await;
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    client.close().await;
+    stop.send(true).unwrap();
+    task.await.unwrap();
+}
+
+#[tokio::test]
+async fn busy_bridge_is_a_tool_error_and_owner_release_does_not_require_mcp_restart() {
+    let directory = tempfile::tempdir().unwrap();
+    let (stop, task, calls) = peer(directory.path()).await;
+    let mut owner = Client::start(directory.path()).await;
+    owner.call("ghidra_status", json!({})).await;
+    let mut next = Client::start(directory.path()).await;
+    assert!(next.rpc("tools/list", json!({})).await["error"].is_null());
+    next.tool_error("ghidra_status", json!({}), "another MCP client owns")
+        .await;
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert!(!directory.path().join("client.pending").exists());
+    owner.close().await;
+    next.call("ghidra_status", json!({})).await;
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    next.close().await;
+    stop.send(true).unwrap();
+    task.await.unwrap();
+}
+
+#[tokio::test]
+async fn discovery_and_invalid_arguments_leave_stale_evidence_untouched() {
+    let directory = tempfile::tempdir().unwrap();
+    for name in ["client.pending", "stop"] {
+        fs::write(directory.path().join(name), b"preserve recovery evidence")
+            .await
+            .unwrap();
+    }
+    let mut client = Client::start(directory.path()).await;
+    assert!(client.rpc("tools/list", json!({})).await["error"].is_null());
+    client
+        .tool_error(
+            "ghidra_read_bytes",
+            json!({"expected_program_id":"fixture","address":"ram:0","count":0}),
+            "invalid_argument",
+        )
+        .await;
+    assert!(!directory.path().join("client.lock").exists());
+    client
+        .tool_error("ghidra_status", json!({}), "unfinished or stopped mailbox")
+        .await;
+    for name in ["client.pending", "stop"] {
+        assert_eq!(
+            fs::read(directory.path().join(name)).await.unwrap(),
+            b"preserve recovery evidence"
+        );
+    }
+    assert!(!directory.path().join("request.json").exists());
+    client.close().await;
+}
+
+#[tokio::test]
+async fn doctor_rejects_bad_launch_configuration_before_dispatch_or_launch() {
     let root = tempfile::tempdir().unwrap();
     let bridge = root.path().join("bridge");
     let config_path = root.path().join("config.json");
@@ -540,16 +670,7 @@ async fn cli_rejects_bad_launch_configuration_before_handshake_or_launch() {
 #[cfg(windows)]
 #[tokio::test]
 async fn launch_config_skips_launch_when_native_lock_is_already_held() {
-    use fs2::FileExt;
     let root = tempfile::tempdir().unwrap();
-    let native = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .read(true)
-        .write(true)
-        .open(root.path().join("bridge.lock"))
-        .unwrap();
-    native.try_lock_exclusive().unwrap();
     let script = root.path().join("not-executed.ps1");
     let jar = root.path().join("not-loaded.jar");
     fs::write(&script, b"throw 'Synthetic fixture must never be executed'")
@@ -588,7 +709,6 @@ async fn launch_config_skips_launch_when_native_lock_is_already_held() {
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     stop.send(true).unwrap();
     task.await.unwrap();
-    drop(native);
 }
 
 #[cfg(windows)]
@@ -603,11 +723,15 @@ async fn cold_mcp_streams_close_while_the_bridge_grandchild_remains_running() {
         .unwrap();
     fs::write(root.path().join("grandchild.ps1"), r#"
 param([string]$Root)
+$native = [IO.File]::Open((Join-Path $Root 'bridge.lock'), [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::ReadWrite)
+$native.Lock(0, 1)
 [IO.File]::WriteAllText((Join-Path $Root 'child-ready'), 'ready')
 $watch = [Diagnostics.Stopwatch]::StartNew()
 while (-not [IO.File]::Exists((Join-Path $Root 'release-child')) -and $watch.Elapsed.TotalSeconds -lt 45) {
     Start-Sleep -Milliseconds 10
 }
+$native.Unlock(0, 1)
+$native.Dispose()
 [IO.File]::WriteAllText((Join-Path $Root 'child-finished'), 'finished')
 "#).await.unwrap();
     fs::write(&script,r#"
@@ -632,6 +756,7 @@ while (-not [IO.File]::Exists((Join-Path $root 'child-ready'))) {
     fs::write(&config_path, serde_json::to_vec(&config).unwrap())
         .await
         .unwrap();
+    let (stop, task, calls) = peer_with_lock(root.path(), false).await;
     let mut server = Command::new(env!("CARGO_BIN_EXE_ghidra-mcp"))
         .arg("--bridge-dir")
         .arg(root.path())
@@ -657,6 +782,15 @@ while (-not [IO.File]::Exists((Join-Path $root 'child-ready'))) {
         if initialized["result"]["serverInfo"]["name"] != "ghidra-mcp" { return Err(format!("invalid initialization: {initialized}")); }
         input.write_all(b"{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}\n").await.map_err(|e|e.to_string())?;
         input.flush().await.map_err(|e|e.to_string())?;
+        if root.path().join("child-ready").exists() { return Err("initialization unexpectedly launched native bridge".into()); }
+        let status_request = json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"ghidra_status","arguments":{}}});
+        let mut bytes = serde_json::to_vec(&status_request).unwrap(); bytes.push(b'\n');
+        input.write_all(&bytes).await.map_err(|e|e.to_string())?;
+        input.flush().await.map_err(|e|e.to_string())?;
+        let line = timeout(RESPONSE_TIMEOUT,output.next_line()).await.map_err(|_| "native status timed out")?
+            .map_err(|e|e.to_string())?.ok_or("MCP closed before status")?;
+        let status_response: Value = serde_json::from_str(&line).map_err(|e|e.to_string())?;
+        if status_response["result"]["structuredContent"]["version"] != "synthetic-transport-fixture" { return Err(format!("invalid status: {status_response}")); }
         drop(input);
         let status = timeout(RESPONSE_TIMEOUT,server.wait()).await.map_err(|_| "MCP did not exit after stdin closed")?.map_err(|e|e.to_string())?;
         if !status.success() { return Err(format!("MCP exited with {status}")); }
@@ -680,7 +814,10 @@ while (-not [IO.File]::Exists((Join-Path $root 'child-ready'))) {
         }
     })
     .await;
+    stop.send(true).unwrap();
+    task.await.unwrap();
     assert!(result.is_ok(), "{result:?}");
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
     assert!(
         cleanup.is_ok(),
         "synthetic grandchild failed to stop after release"

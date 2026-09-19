@@ -4,6 +4,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
+import { checkInspectionTools } from './native-inspection.mjs';
 
 const parameters = process.argv.slice(2);
 assert.equal(parameters.length, 6, 'Expected --server, --bridge-dir, --work-dir');
@@ -58,6 +59,7 @@ try {
   const initialized = await rpc('initialize', { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'redline-native-gui-acceptance', version: '0.1.0' } });
   assert(initialized.result?.serverInfo);
   child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n');
+  assert.equal((await rpc('tools/list', {})).result.tools.length, 39);
   const status = await call('status');
   assert.equal(status.mode, 'gui'); assert.equal(status.project_lifecycle, false); assert.equal(status.program_management, true);
   const project = await call('get_project'); assert.equal(project.name, ready.project_name);
@@ -66,6 +68,7 @@ try {
   assert(language?.compilers.some(compiler => compiler.id === 'gcc'), 'Expected installed x86 gcc compiler specification');
   await call('create_project', { path: work, name: 'UnexpectedGuiProject' }, true);
   const original = Buffer.alloc(256); original.set([0xb8, 42, 0, 0, 0, 0xc3]); original.write('GUI_SYNTHETIC', 32);
+  for (let i = 0; i < 8; i++) original.writeUInt16LE(100 + i * 10, 128 + i * 2);
   const modified = Buffer.from(original); modified[1] = 46;
   const originalPath = join(work, 'gui-original.bin'), modifiedPath = join(work, 'gui-modified.bin');
   await writeFile(originalPath, original); await writeFile(modifiedPath, modified);
@@ -76,7 +79,10 @@ try {
   await call('go_to', { ...firstIdentity, address: 'ram:00400010' });
   await call('set_label', { ...firstIdentity, address: 'ram:00400010', name: 'gui_synthetic_marker' });
   await call('set_comment', { ...firstIdentity, address: 'ram:00400010', comment: 'Isolated native GUI acceptance fixture.' });
+  await call('create_instructions', { ...firstIdentity, address: 'ram:00400000', length: 6 });
+  await call('define_data', { ...firstIdentity, address: 'ram:00400080', type_name: 'u16', count: 8 });
   const saved = await call('save_program', firstIdentity); assert.equal(saved.changed, false);
+  await checkInspectionTools(call, firstIdentity, 'ram:00400010', 'Isolated native GUI acceptance fixture.', original);
   const second = await call('import_program', { ...importArgs, path: modifiedPath, name: 'Modified' }); assert.equal(second.source_sha256, sha(modified));
   await call('go_to', { expected_program_id: first.id, address: 'ram:00400010' }, true);
   assert.deepEqual((await call('read_bytes', { expected_program_id: second.id, address: 'ram:00400000', count: 256 })).bytes, [...modified]);
