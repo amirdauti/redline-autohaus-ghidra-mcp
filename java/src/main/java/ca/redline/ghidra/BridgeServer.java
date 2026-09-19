@@ -13,6 +13,8 @@ import static ca.redline.ghidra.CommandDispatcher.*;
 /** Single-client mailbox with advisory process lock and atomic publication. */
 public final class BridgeServer implements AutoCloseable {
     private static final int MAX_REQUEST = 1024 * 1024, MAX_RESPONSE = 8 * 1024 * 1024;
+    // Nullable results are part of the typed protocol (absent comments, data and P-code outputs).
+    private static final Gson RESPONSE_JSON = new GsonBuilder().serializeNulls().create();
     private final Path mailbox;
     private final CommandDispatcher dispatcher;
     private final FileChannel lockChannel;
@@ -71,8 +73,8 @@ public final class BridgeServer implements AutoCloseable {
                 halt = id.isEmpty() || mutation;
                 response = failure(id, id.isEmpty() ? "bridge_halted" : mutation ? "mutation_uncertain" : "native_error", safeMessage(failure));
             }
-            byte[] responseBytes = new Gson().toJson(response).getBytes(StandardCharsets.UTF_8);
-            if (responseBytes.length > MAX_RESPONSE) { responseBytes = new Gson().toJson(failure(id, "bridge_halted", "Response exceeds 8 MiB; inspect command state before reconnecting")).getBytes(StandardCharsets.UTF_8); halt = true; }
+            byte[] responseBytes = RESPONSE_JSON.toJson(response).getBytes(StandardCharsets.UTF_8);
+            if (responseBytes.length > MAX_RESPONSE) { responseBytes = RESPONSE_JSON.toJson(failure(id, "bridge_halted", "Response exceeds 8 MiB; inspect command state before reconnecting")).getBytes(StandardCharsets.UTF_8); halt = true; }
             Files.delete(request);
             Path temporary = mailbox.resolve("response." + UUID.randomUUID() + ".tmp");
             try (FileChannel output = FileChannel.open(temporary, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {

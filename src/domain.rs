@@ -209,6 +209,34 @@ pub struct AddressParams {
     pub expected_program_id: String,
     pub address: String,
 }
+
+fn default_component_limit() -> u32 {
+    32
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GetDataParams {
+    pub expected_program_id: String,
+    /// Inspect the existing data definition containing this address.
+    pub address: String,
+    #[serde(default)]
+    #[schemars(range(max = 2147483647))]
+    pub component_offset: u32,
+    #[serde(default = "default_component_limit")]
+    #[schemars(range(min = 1, max = 128))]
+    pub component_limit: u32,
+}
+impl Validate for GetDataParams {
+    fn validate(&self) -> Result<(), String> {
+        identity(&self.expected_program_id)?;
+        address(&self.address)?;
+        if self.component_offset > i32::MAX as u32 {
+            return Err("component_offset must be at most 2147483647".into());
+        }
+        range(self.component_limit, 128, "component_limit")
+    }
+}
 impl Validate for AddressParams {
     fn validate(&self) -> Result<(), String> {
         identity(&self.expected_program_id)?;

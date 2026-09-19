@@ -4,4 +4,5 @@
 command = 'C:\tools\ghidra-mcp\ghidra-mcp.exe'
 args = ['--bridge-dir', 'C:\GhidraWork\mailbox', '--launch-config', 'C:\GhidraWork\launch.json', '--timeout-ms', '45000']
 startup_timeout_sec = 75
-tool_timeout_sec = 60
+# The first native tool call may include cold Ghidra startup.
+tool_timeout_sec = 120

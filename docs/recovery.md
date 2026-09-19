@@ -1,5 +1,11 @@
 # Mailbox recovery
 
+MCP initialization and tool discovery no longer require a running or unowned native bridge. A tool error saying the bridge is offline or another client owns the mailbox occurs before dispatch. Start the bridge or disconnect the owning client, then explicitly call `ghidra_status` again in the same MCP session. No pending request is created for that failed attempt. A connected client retains ownership until it disconnects; the bridge stays alive.
+
+Cold startup occurs during the first native tool call; configure the client tool timeout to cover startup plus the request (120 seconds with the default launcher/request bounds). If startup fails or is cancelled after the launcher may have run, that MCP session refuses to launch again even if there is no pending request. Inspect the launch logs and process record first: a Java descendant may still be alive. Reconcile that process, verify that no unfinished exchange exists, then restart the MCP client. A running confirmed bridge can be reused. Do not interpret a client timeout as proof that startup failed.
+
+The following procedure applies when a request was dispatched or stale mailbox evidence exists. Every native call checks those guards before reconnecting or launching; an offline bridge does not make uncertain state safe to reuse.
+
 The client records a durable `client.pending` marker before publishing a command. It removes that marker only after validating the matching response. A timed-out command may already have changed Ghidra; do not repeat it based on the timeout alone.
 
 1. Stop the MCP client using that mailbox.

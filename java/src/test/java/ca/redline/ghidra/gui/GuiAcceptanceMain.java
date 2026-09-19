@@ -13,9 +13,11 @@ import ghidra.framework.GhidraApplicationConfiguration;
 import ghidra.framework.main.AppInfo;
 import ghidra.framework.model.Project;
 import ghidra.framework.plugintool.PluginTool;
+import ghidra.framework.plugintool.Plugin;
 import ghidra.program.model.listing.Program;
 import ghidra.program.util.ProgramLocation;
 import ghidra.util.task.TaskMonitorAdapter;
+import ghidra.util.classfinder.ClassSearcher;
 import ghidra.util.ConsoleErrorDisplay;
 import ghidra.util.ErrorDisplay;
 import java.lang.reflect.Field;
@@ -61,6 +63,19 @@ public final class GuiAcceptanceMain {
             };
             configuration.setShowSplashScreen(false);
             Application.initializeApplication(new GhidraApplicationLayout(installation.toFile()), configuration);
+            // Loading a plugin by its explicit class name alone bypasses the production
+            // discovery rules and previously missed an incorrectly named extension jar.
+            if (!ClassSearcher.getClasses(Plugin.class).contains(RedlineMcpPlugin.class)) {
+                throw new IllegalStateException("RedlineMcpPlugin is not discoverable by Ghidra's production ClassSearcher; check the module jar name");
+            }
+            Path pluginSource = Path.of(RedlineMcpPlugin.class.getProtectionDomain().getCodeSource().getLocation().toURI()).toRealPath();
+            if (!pluginSource.getFileName().toString().equals("RedlineGhidraMcp.jar")
+                    || !pluginSource.getParent().getFileName().toString().equals("lib")
+                    || !pluginSource.getParent().getParent().getFileName().toString().equals("RedlineGhidraMcp")) {
+                throw new IllegalStateException("Plugin discovery must use the packaged module jar: " + pluginSource);
+            }
+            report.addProperty("plugin_discovered_by_class_searcher", true);
+            report.addProperty("discovered_plugin_jar", pluginSource.toString());
             String projectName = "GuiSynthetic_" + UUID.randomUUID().toString().replace("-", "");
             if (Files.exists(work.resolve(projectName + ".gpr")) || Files.exists(work.resolve(projectName + ".rep"))) {
                 throw new IllegalStateException("Synthetic project name collision");

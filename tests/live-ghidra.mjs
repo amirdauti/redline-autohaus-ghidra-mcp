@@ -5,6 +5,7 @@ import { mkdir, writeFile, readFile } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
 import { resolve, join } from 'node:path';
 import assert from 'node:assert/strict';
+import { checkInspectionTools } from './native-inspection.mjs';
 
 const args = Object.fromEntries(process.argv.slice(2).reduce((pairs,value,index,all) => {
   if(index % 2 === 0) pairs.push([value.replace(/^--/,''), all[index+1]]); return pairs;
@@ -26,7 +27,7 @@ child.stdout.on('data',chunk=>{
 });
 child.on('error',failAll);child.on('exit',code=>failAll(new Error(`MCP exited ${code}: ${stderr.slice(-2000)}`)));
 function failAll(error){for(const request of pending.values()){clearTimeout(request.timer);request.reject(error);}pending.clear();}
-function rpc(method,params){return new Promise((resolve,reject)=>{const id=next++;const timer=setTimeout(()=>{pending.delete(id);reject(new Error(`RPC timeout: ${method}`));},60000);pending.set(id,{resolve,reject,timer});child.stdin.write(JSON.stringify({jsonrpc:'2.0',id,method,params})+'\n');});}
+function rpc(method,params){return new Promise((resolve,reject)=>{const id=next++;const timer=setTimeout(()=>{pending.delete(id);reject(new Error(`RPC timeout: ${method}`));},120000);pending.set(id,{resolve,reject,timer});child.stdin.write(JSON.stringify({jsonrpc:'2.0',id,method,params})+'\n');});}
 async function closeMcp(){
   await new Promise((resolve,reject)=>{
     const timer=setTimeout(()=>reject(new Error('MCP did not exit and close its standard streams within 5 seconds; a descendant may have inherited client handles')),5000);
@@ -49,7 +50,7 @@ const contains=(object,text)=>JSON.stringify(object).includes(text);
 try{
   const initialized=await rpc('initialize',{protocolVersion:'2025-03-26',capabilities:{},clientInfo:{name:'redline-native-acceptance',version:'0.1.0'}});
   assert(initialized.result?.serverInfo);child.stdin.write(JSON.stringify({jsonrpc:'2.0',method:'notifications/initialized'})+'\n');
-  const tools=await rpc('tools/list',{});assert.equal(tools.result.tools.length,36);
+  const tools=await rpc('tools/list',{});assert.equal(tools.result.tools.length,39);
   const status=await call('status');assert(contains(status,'headless'));
   const languages=await call('list_languages');assert(contains(languages,'x86:LE:32:default'));assert(contains(languages,'tricore:LE:32:'));
   const x86=languages.languages.find(language=>language.id==='x86:LE:32:default');
@@ -83,8 +84,8 @@ try{
   await call('define_data',{...identity,address:'ram:00400080',type_name:'u16',count:8});
   await call('define_data',{...identity,address:'ram:00400000',type_name:'u8',count:1},true);
   await call('set_label',{...identity,address:'ram:00400080',name:'synthetic_table'});
-  const comment='Synthetic table for native acceptance; scaling unconfirmed.';
-  const annotated=await call('set_comment',{...identity,address:'ram:00400080',comment});assert(contains(annotated,comment));
+  const comment='Synthetic table for native acceptance.\nScaling unconfirmed.\tRead-only inspection fixture.';
+  const annotated=await call('set_comment',{...identity,address:'ram:00400080',comment});assert.equal(annotated.comment,comment);
   await call('close_project',{expected_project_id:projectId},true);
   await call('import_program',{expected_project_id:projectId,path:modifiedFile,name:'UnsavedSwitch',language_id:'x86:LE:32:default',compiler_spec_id:primaryCompiler.id,image_base:'00400000'},true);
   assert(contains(await call('list_symbols',{...identity,query:'synthetic_table'}),'synthetic_table'));
@@ -103,6 +104,7 @@ try{
   assert(['completed','failed','cancelled'].includes(cancelled.state),'Cancellation must eventually release the analysis job');
   if(cancel.cancellation_requested)assert(cancelled.state!=='completed'||cancelled.error===undefined,'Completed job cannot carry a hidden failure');
   await call('save_program',identity);
+  await checkInspectionTools(call, identity, 'ram:00400080', comment, bytes);
   const exported=join(directory,`synthetic-${stamp}.gzf`);await call('export_program',{...identity,path:exported});await call('export_program',{...identity,path:exported},true);
   const current=await call('import_program',{expected_project_id:projectId,path:modifiedFile,name:'Stage1',language_id:'x86:LE:32:default',compiler_spec_id:alternativeCompiler.id,image_base:'00400000'});
   assert.notEqual(current.id,programId);assert.equal(current.source_sha256,sha(modified));assert.equal(current.compiler_spec_id,alternativeCompiler.id);
@@ -122,6 +124,7 @@ try{
   const reopened=await call('open_project',{path:directory,name:project.name});
   const reopenedProgram=await call('select_program',{expected_project_id:reopened.id,program_path:'/Original'});
   const restored=await call('read_bytes',{expected_program_id:reopenedProgram.id,address:'ram:00400000',count:256});assert.deepEqual(restored.bytes,[...bytes]);
+  await checkInspectionTools(call, {expected_program_id:reopenedProgram.id}, 'ram:00400080', comment, bytes);
   assert(contains(await call('list_symbols',{expected_program_id:reopenedProgram.id,query:'synthetic_table'}),'synthetic_table'));
   const restoredFunction=await call('get_function',{expected_program_id:reopenedProgram.id,address:'ram:00400000'});assert.equal(restoredFunction.name,'answer_42');
   await call('go_to',{expected_program_id:reopenedProgram.id,address:'ram:00400000'},true);

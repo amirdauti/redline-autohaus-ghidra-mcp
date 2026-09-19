@@ -24,7 +24,8 @@ quote_arg() { local value="$1"; value="${value//\\/\\\\}"; value="${value//\"/\\
   while IFS= read -r -d '' file; do quote_arg "$file"; done < <(find "$repo/java/src/main/java" -name '*.java' -print0)
 } > "$build/javac.args"
 "$jdk_root/bin/javac" "@$build/javac.args"
-"$jdk_root/bin/jar" --create --file "$extension/lib/redline-ghidra-mcp.jar" -C "$classes" .
+# The jar basename must start with the module name for production plugin discovery.
+"$jdk_root/bin/jar" --create --file "$extension/lib/RedlineGhidraMcp.jar" -C "$classes" .
 sed -e "s/@ghidraVersion@/$version/g" -e "s/@date@/$(date +%F)/g" "$repo/java/extension.properties" > "$extension/extension.properties"
 cp "$repo/java/Module.manifest" "$extension/Module.manifest"
 archive="$repo/dist/ghidra_${version}_${release}_$(date +%Y%m%d-%H%M%S)_RedlineGhidraMcp.zip"

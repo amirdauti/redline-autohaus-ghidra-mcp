@@ -34,7 +34,7 @@ try {
     if ($properties -notmatch '(?m)^name=RedlineGhidraMcp\r?$') { throw 'Unexpected extension name.' }
     $versionLine = '(?m)^version=' + [regex]::Escape($config.Version) + '\r?$'
     if ($properties -notmatch $versionLine) { throw "Extension was not built for Ghidra $($config.Version)." }
-    if (-not $zip.GetEntry('RedlineGhidraMcp/lib/redline-ghidra-mcp.jar')) { throw 'Missing adapter jar.' }
+    if (-not $zip.GetEntry('RedlineGhidraMcp/lib/RedlineGhidraMcp.jar')) { throw 'Missing discoverable module jar RedlineGhidraMcp.jar. Rebuild the extension with the current build script.' }
 }
 finally { $zip.Dispose() }
 if ((Test-Path -LiteralPath $destination) -and -not $ReplaceExisting) {

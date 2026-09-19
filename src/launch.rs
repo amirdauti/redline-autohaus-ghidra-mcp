@@ -82,8 +82,7 @@ fn load_config(path: &Path, expected_bridge_dir: &Path) -> Result<LaunchConfig, 
     Ok(config)
 }
 
-#[cfg(any(windows, test))]
-fn bridge_running(directory: &Path) -> Result<bool, String> {
+pub(crate) fn bridge_running(directory: &Path) -> Result<bool, String> {
     use fs2::FileExt;
     let probe = std::fs::OpenOptions::new()
         .create(true)
@@ -119,6 +118,10 @@ pub async fn ensure_bridge(config_path: &Path, bridge_dir: &Path) -> Result<(), 
         let _ = config;
         Err("--launch-config is supported only on Windows; start the bridge separately on this platform".into())
     }
+}
+
+pub(crate) fn validate_config(config_path: &Path, bridge_dir: &Path) -> Result<(), String> {
+    load_config(config_path, bridge_dir).map(|_| ())
 }
 
 #[cfg(windows)]

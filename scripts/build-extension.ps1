@@ -17,7 +17,9 @@ $argumentFile = Join-Path $build 'javac.args'
 Write-JavaArgumentFile $argumentFile $arguments
 & $config.Javac ('@' + $argumentFile)
 if ($LASTEXITCODE -ne 0) { throw "javac failed with exit code $LASTEXITCODE" }
-$jarPath = Join-Path $extension 'lib/redline-ghidra-mcp.jar'
+# Ghidra's production ClassSearcher only scans module jars whose name starts with
+# the enclosing module name. A generic adapter name loads headlessly but hides the GUI plugin.
+$jarPath = Join-Path $extension 'lib/RedlineGhidraMcp.jar'
 & $config.Jar --create --file $jarPath -C $classes .
 if ($LASTEXITCODE -ne 0) { throw 'jar packaging failed.' }
 $properties = [IO.File]::ReadAllText((Join-Path $repo 'java/extension.properties')).Replace('@ghidraVersion@', $config.Version).Replace('@date@', (Get-Date -Format 'yyyy-MM-dd'))
