@@ -46,6 +46,15 @@ public final class BridgeGuardsTest {
         expectRejected(() -> CommandDispatcher.integer(parse("{}"), "count", 1, 4096, null));
         check(CommandDispatcher.integer(parse("{\"count\":4096}"), "count", 1, 4096, null) == 4096);
         check(CommandDispatcher.bytesJson(new byte[] {(byte) 0xff, 0}).toString().equals("[255,0]"));
+        for (String operation : List.of("rename_variable", "set_variable_type", "set_function_signature",
+                "create_structure", "set_structure_field", "create_enum", "create_union", "create_typedef", "apply_data_type",
+                "set_processor_context", "clear_listing", "set_bookmark", "delete_bookmark", "batch_set_comments", "update_function_tags", "batch_rename")) {
+            check(BridgeServer.isMutation(operation));
+        }
+        for (String operation : List.of("get_function_variables", "get_data_type", "get_structure_field_references",
+                "get_control_flow", "trace_data_flow", "emulate_function", "preview_instructions", "compare_program_memory", "compare_saved_function")) {
+            check(!BridgeServer.isMutation(operation));
+        }
         Path temporary = Files.createTempDirectory("redline-ghidra-guards-");
         try (CommandDispatcher dispatcher = new CommandDispatcher(new EmptyContext(), temporary, List.of(temporary))) {
             expectRejected(() -> dispatcher.dispatch("patch_bytes", new JsonObject()));

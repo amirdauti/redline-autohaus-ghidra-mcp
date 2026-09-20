@@ -71,12 +71,17 @@ public final class CommandDispatcher implements AutoCloseable {
     }
 
     public synchronized JsonObject dispatch(String operation, JsonObject params) throws Exception {
-        if (!OPERATIONS.contains(operation) && !ExtendedCommands.supports(operation)) throw error("unknown_operation", "Unknown operation");
+        if (!OPERATIONS.contains(operation) && !ExtendedCommands.supports(operation) && !ProjectInspectionCommands.supports(operation)) throw error("unknown_operation", "Unknown operation");
         if (!Set.of("status", "job_status", "list_languages", "cancel_analysis").contains(operation)) ensureIdle();
+        if (ProjectInspectionCommands.supports(operation)) {
+            Program program = expectedProgram(params); Project project = requireProject(); JsonObject result;
+            try { result = ProjectInspectionCommands.execute(project, program, operation, params); }
+            catch (IllegalArgumentException invalid) { throw error("invalid_argument", safeMessage(invalid)); }
+            checkContext(project, program, false); return result;
+        }
         if (ExtendedCommands.supports(operation)) {
             Program program = expectedProgram(params); Project project = requireProject();
-            boolean mutation = !Set.of("get_analysis_options", "get_function", "list_symbols", "list_strings",
-                "get_comments", "get_data", "get_pcode").contains(operation);
+            boolean mutation = ExtendedCommands.isMutation(operation);
             JsonObject result;
             try { result = ExtendedCommands.execute(program, projectRoot, operation, params); }
             catch (IllegalArgumentException invalid) { throw error("invalid_argument", safeMessage(invalid)); }
@@ -129,6 +134,7 @@ public final class CommandDispatcher implements AutoCloseable {
             && (!Set.of("import_program", "select_program").contains(operation) || context.supportsProgramManagement())
             && (!operation.equals("go_to") || context.mode().equals("gui"))).sorted().forEach(capabilities::add);
         ExtendedCommands.operations().stream().sorted().forEach(capabilities::add);
+        ProjectInspectionCommands.operations().stream().sorted().forEach(capabilities::add);
         out.add("capabilities", capabilities);
         out.addProperty("project_lifecycle", context.supportsLifecycle());
         out.addProperty("program_management", context.supportsProgramManagement());

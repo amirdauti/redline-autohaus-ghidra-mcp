@@ -1,28 +1,18 @@
 # Headless tool coverage
 
-The server exposes 39 tools. All inspection and analysis operations run through native Ghidra APIs in headless mode. `go_to` requires a GUI CodeBrowser and returns unsupported headlessly. Project creation/open/close belong to headless mode; the GUI uses the project already open in its tool.
+The server exposes **85 tools**. Headless Ghidra supports **84**: `go_to` requires a GUI CodeBrowser. Project creation/open/close are headless operations; the GUI adapter uses the project already open in its tool. All 46 additions below share the native implementation between headless and GUI modes.
 
-The new read-only tools add useful analysis detail:
-
-| Tool | What it exposes | Useful for |
+| Added capabilities | Tools | Contract |
 | --- | --- | --- |
-| `ghidra_get_comments` | Stored EOL, pre, post, plate and repeatable comments, with truncation reporting | Retrieving prior findings and annotations |
-| `ghidra_get_data` | Existing type definitions, bounded scalar representations and paginated immediate components | Inspecting arrays and structures without guessing their interpretation |
-| `ghidra_get_pcode` | Structured raw instruction operations and varnodes | Following arithmetic, loads, stores and branches independently of decompiled C |
+| Function structure, graphs and searches | 8 | [Research tools](research-tools.md) |
+| Decompiler SSA, data-flow, batch reads, code search, matching and emulation | 9 | [Flow tools](flow-tools.md) |
+| Variables, signatures, structures, unions, enums and typed data | 13 | [Type tools](type-tools.md) |
+| Listing/memory/context, annotations and saved-program comparisons | 16 | [Utility tools](utility-tools.md) |
 
-P-code is raw instruction semantics, without flow overrides or decompiler SSA. Data inspection reports the native definition already in the project; it does not establish a table's real function, units or scaling. All three tools require an active program identity, obey analysis busy/context guards, and do not alter bytes or metadata. See [schemas and bounds](bridge-protocol.md).
+Use `get_pcode` for existing raw instruction semantics, and `get_high_pcode` for a bounded decompiler SSA snapshot. `trace_data_flow` follows that snapshot's value definitions and uses within a function, with explicit memory/call boundaries. Graphs follow existing resolved references. Incomplete graphs and missing matches do not prove that runtime behavior is absent.
 
-## Candidates for later additions
+Type and annotation edits are transactional, verify readback, and retain explicit save behavior. Variable selectors include native identity/storage and signatures require an expected existing declaration. Data types apply only to undefined storage. Listing repair rejects partial code units and function overlap. Preview, comparisons and emulation leave listing and bytes unchanged.
 
-These are possible future tools, not implemented capabilities:
+The isolated emulator requires explicit inputs and a stop instruction, with a step/time budget. Generated x86 and TriCore arithmetic fixtures exercise it; this does not establish a whole ECU emulator, peripheral model, live debugger or flashing capability. Function fingerprints intentionally abstract constants and addresses and serve only as matching candidates.
 
-| Candidate | Purpose | Native work still required |
-| --- | --- | --- |
-| Inspect code units | Show code/data/undefined intervals with pagination | Address-range and overlay handling; native acceptance |
-| Hash current memory | Verify a bounded live region against source bytes | Gaps, uninitialized blocks and aliases; cancellation and limits |
-| Preview disassembly | Decode candidate instructions without changing the listing | Processor context, delay slots and precise no-write validation |
-| Function body and register storage | Expose body ranges and calling convention details | Noncontiguous functions, stack/register storage and result bounds |
-| Function control-flow graph | Return basic blocks and branch edges | Indirect flow, incomplete analysis and bounded graph traversal |
-| Structures and signatures | Apply verified layouts and function types | Strict typed inputs, transactions, conflict checks and readback |
-
-Adding a tool requires a typed MCP schema, native API implementation, bounded output, identity/ownership guards, and synthetic native tests. General script execution is not needed for these workflows.
+All tools retain strict schemas, explicit program identities, address spaces, bounded output and uncertainty guards. Caller-supplied scripts and shell commands are not part of this interface. See [native acceptance scope](live-acceptance.md) and [bridge protocol](bridge-protocol.md).

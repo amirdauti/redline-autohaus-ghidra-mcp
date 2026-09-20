@@ -7,7 +7,11 @@ use serde::Serialize;
 use serde_json::Value;
 use std::{path::PathBuf, time::Duration};
 
+mod flow;
 mod inspection;
+mod research;
+mod types;
+mod utilities;
 
 struct ConnectionConfig {
     directory: PathBuf,
@@ -152,6 +156,31 @@ fn boolean(value: &Value, name: &str) -> Result<bool, String> {
 fn validate_result(operation: &str, params: &Value, value: &Value) -> Result<(), String> {
     if !value.is_object() {
         return Err("result must be an object".into());
+    }
+    if flow::supports(operation) {
+        return flow::validate(operation, params, value);
+    }
+    if research::supports(operation) {
+        return research::validate(operation, params, value);
+    }
+    if types::supports(operation) {
+        return types::validate(operation, params, value);
+    }
+    if operation == "compare_saved_function" {
+        if value["other_program_path"] != params["other_program_path"]
+            || value["other_version"] != "saved_copy"
+            || !string(value, "other_source_sha256", 64)?.eq_ignore_ascii_case(
+                params["expected_other_source_sha256"]
+                    .as_str()
+                    .ok_or("missing expected source hash")?,
+            )
+        {
+            return Err("saved function comparison identity mismatch".into());
+        }
+        return flow::validate("compare_functions", params, value);
+    }
+    if utilities::supports(operation) {
+        return utilities::validate(operation, params, value);
     }
     match operation {
         "get_comments" | "get_data" | "get_pcode" => {

@@ -4,6 +4,11 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::path::{Component, Path};
 
+pub mod flow;
+pub mod research;
+pub mod types;
+pub mod utilities;
+
 pub trait Validate {
     fn validate(&self) -> Result<(), String>;
 }

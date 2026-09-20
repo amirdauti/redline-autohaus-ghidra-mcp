@@ -24,10 +24,26 @@ public final class ExtendedCommands {
         "rename_function", "get_function", "define_data", "list_symbols", "list_strings", "export_program",
         "get_comments", "get_data", "get_pcode");
 
-    public static boolean supports(String operation) { return OPERATIONS.contains(operation); }
-    public static Set<String> operations() { return OPERATIONS; }
+    public static boolean supports(String operation) { return OPERATIONS.contains(operation) || ResearchCommands.supports(operation)
+        || TypeCommands.supports(operation) || FlowCommands.supports(operation) || UtilityCommands.supports(operation); }
+    public static Set<String> operations() {
+        Set<String> all = new HashSet<>(OPERATIONS);
+        all.addAll(ResearchCommands.operations()); all.addAll(TypeCommands.operations());
+        all.addAll(FlowCommands.operations()); all.addAll(UtilityCommands.operations()); return Set.copyOf(all);
+    }
+    public static boolean isMutation(String operation) {
+        if (ResearchCommands.supports(operation)) return ResearchCommands.isMutation(operation);
+        if (TypeCommands.supports(operation)) return TypeCommands.isMutation(operation);
+        if (FlowCommands.supports(operation)) return FlowCommands.isMutation(operation);
+        if (UtilityCommands.supports(operation)) return UtilityCommands.isMutation(operation);
+        return !Set.of("get_analysis_options", "get_function", "list_symbols", "list_strings", "get_comments", "get_data", "get_pcode").contains(operation);
+    }
 
     public static JsonObject execute(Program program, Path projectRoot, String operation, JsonObject p) throws Exception {
+        if (ResearchCommands.supports(operation)) return ResearchCommands.execute(program, operation, p);
+        if (TypeCommands.supports(operation)) return TypeCommands.execute(program, operation, p);
+        if (FlowCommands.supports(operation)) return FlowCommands.execute(program, operation, p);
+        if (UtilityCommands.supports(operation)) return UtilityCommands.execute(program, operation, p);
         return switch (operation) {
             case "get_analysis_options" -> analysisOptions(program, p, false);
             case "set_analysis_options" -> analysisOptions(program, p, true);

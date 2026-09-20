@@ -90,10 +90,12 @@ public final class BridgeServer implements AutoCloseable {
     /** Request a stop after the current command; ownership remains until close(). */
     public void requestStop() { closed = true; }
 
-    private static boolean isMutation(String operation) {
+    static boolean isMutation(String operation) {
+        // Keep failure handling aligned with the same native registry used by dispatch.
+        // Unknown native failures after a metadata edit must retain ownership and halt.
+        if (ExtendedCommands.supports(operation)) return ExtendedCommands.isMutation(operation);
         return Set.of("create_project", "open_project", "close_project", "import_program", "select_program", "save_program",
-            "analyze", "cancel_analysis", "set_label", "set_comment", "set_analysis_options", "set_image_base",
-            "create_memory_block", "create_instructions", "create_function", "rename_function", "define_data", "export_program").contains(operation);
+            "analyze", "cancel_analysis", "set_label", "set_comment").contains(operation);
     }
 
     private static JsonObject failure(String id, String code, String message) { return object("protocol", 1, "id", id, "ok", false, "error", object("code", code, "message", message)); }
