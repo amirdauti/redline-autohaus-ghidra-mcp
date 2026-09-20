@@ -20,6 +20,14 @@ Primary API documentation ships in `docs/GhidraAPI_javadoc.zip` and `docs/ghidra
 | References and metadata | `ReferenceManager.getReferencesTo/getReferencesFrom`, `SymbolTable.createLabel`, `SourceType.USER_DEFINED`, `Listing.setComment/getComment`, `CommentType.EOL` |
 | Read-only data and comments | `Listing.getDefinedDataContaining/getComment`, `Data.getDataType/getLength/getNumComponents/getComponent/getDefaultValueRepresentation`, `CommentType` |
 | Raw instruction semantics | `Listing.getInstructionAt`, `Instruction.getPcode(false)`, `PcodeOp.getMnemonic/getOutput/getInput`, `Varnode.getAddress/getOffset/getSize` |
+| Control/call graphs | `BasicBlockModel`, `CodeBlock.getDestinations`, `ReferenceManager`, `Function.getBody`, native register/stack `VariableStorage` |
+| SSA and bounded data flow | `DecompileResults.getHighFunction`, `HighFunction.getPcodeOps`, `PcodeOpAST.getParent`, `Varnode.getDef/getDescendants` |
+| Variable/signature editing | `HighFunctionDBUtil.getFunctionVariable/updateDBVariable`, `Function.updateFunction`, `ParameterImpl`, `ReturnParameterImpl`; snapshot guards reject changes to unrelated database variables |
+| Structured types | `DataTypeManager`, `StructureDataType`, `UnionDataType`, `EnumDataType`, `TypedefDataType`, `PointerDataType`, `ArrayDataType`, `Listing.createData` |
+| Listing and processor context | `Listing.getCodeUnitContaining/clearCodeUnits`, `ProgramContext.getRegisterValue/setValue/hasValueOverRange`, `PseudoDisassembler`, `PseudoDisassemblerContext` |
+| Research annotations | `BookmarkManager`, all five `CommentType` values, `Function.getTags/addTag/removeTag`, `Symbol.setName` |
+| Saved-program comparison | `DomainFile.getReadOnlyDomainObject` with a separate consumer, source identity verification and unconditional release |
+| Isolated emulation | `EmulatorHelper`, explicit register/memory overlay, `MemoryFaultHandler`, bounded `step`; no emulator state is committed to `Program` |
 | GUI plugin discovery | `ghidra.util.classfinder.ClassSearcher.getClasses(Plugin.class)`, module-matching `RedlineGhidraMcp.jar` basename |
 | Metadata transactions | `Program.startTransaction/endTransaction` |
 
@@ -34,6 +42,10 @@ Runtime IDs identify object instances in one bridge session. They are separate f
 ## Bounds and import behavior
 
 Raw import requires explicit language, compiler and hexadecimal image base; the loader is restricted to `BinaryLoader`. Initial imports are restricted to 1 byte through 512 MiB and byte-addressed languages, with exactly one initialized block. Both the block start and native program image base must equal the requested base. `LoadResults.save` persists the new domain file after collision checks. Subsequent metadata changes are saved only by explicit `save_program`.
+
+Some chip-specific specifications, including TC29x, cause BinaryLoader to create processor default blocks in addition to the file-backed block. The importer rejects these layouts rather than relocating fixed peripheral regions. Configure complex projects in Ghidra and open/select the saved program. Generic TriCore raw import and isolated TC29x ProgramDB emulation are tested separately.
+
+Decoded high P-code belongs to a decompiler snapshot. Native `PcodeOpAST.isDead()` flags do not reliably identify membership of decoded syntax-tree operations in Ghidra12.1.3; the adapter uses decoded parent-block membership. Data-flow traversal stops at memory and call boundaries and has no interprocedural alias analysis. New read results are bounded before transport; metadata result bounds are checked before their transactions commit.
 
 The adapter resolves existing filesystem paths before checking configured roots. Create/open project paths must resolve under the project root; raw inputs must resolve under an import root. Existing project markers/storage or program domain names are not overwritten. This is a local adapter, not a sandbox against a separate process concurrently changing filesystem links or project contents.
 
@@ -53,4 +65,4 @@ Before releasing the lock, `close()` also cancels and waits for bridge-owned bac
 
 ## Parser and guard harness
 
-`java/src/test/java/ca/redline/ghidra/BridgeGuardsTest.java` is a standalone Java `main` test using the adapter and installed Ghidra jars on the classpath. It does not initialize Ghidra or load a native program fixture. Its 23 checks exercise strict parsing, duplicate fields, numeric guards, unsupported patch/script commands, actual mailbox file-lock exclusion, stop requests retaining ownership, and preservation of stale mailbox files. Native workflow tests remain separate.
+`java/src/test/java/ca/redline/ghidra/BridgeGuardsTest.java` is a standalone Java `main` test using the adapter and installed Ghidra jars on the classpath. Its 48 checks exercise strict parsing, duplicate fields, numeric guards, unsupported patch/script commands, mutation classification for every added write, actual mailbox file-lock exclusion, stop requests retaining ownership, and preservation of stale mailbox files. It does not initialize Ghidra or load a native program fixture. Native workflow tests remain separate.

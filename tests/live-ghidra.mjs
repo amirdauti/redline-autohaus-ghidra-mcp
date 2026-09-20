@@ -6,6 +6,11 @@ import { createHash, randomUUID } from 'node:crypto';
 import { resolve, join } from 'node:path';
 import assert from 'node:assert/strict';
 import { checkInspectionTools } from './native-inspection.mjs';
+import { populateResearchBytes, researchFixture, defineResearchFixture } from './expanded-fixture.mjs';
+import { checkResearchTools } from './native-research.mjs';
+import { checkFlowTools, checkTriCoreEmulation } from './native-flow.mjs';
+import { checkTypeTools, checkTypePersistence } from './native-types.mjs';
+import { checkUtilityTools, checkUtilityPersistence, checkSavedComparisons } from './native-utilities.mjs';
 
 const args = Object.fromEntries(process.argv.slice(2).reduce((pairs,value,index,all) => {
   if(index % 2 === 0) pairs.push([value.replace(/^--/,''), all[index+1]]); return pairs;
@@ -50,7 +55,7 @@ const contains=(object,text)=>JSON.stringify(object).includes(text);
 try{
   const initialized=await rpc('initialize',{protocolVersion:'2025-03-26',capabilities:{},clientInfo:{name:'redline-native-acceptance',version:'0.1.0'}});
   assert(initialized.result?.serverInfo);child.stdin.write(JSON.stringify({jsonrpc:'2.0',method:'notifications/initialized'})+'\n');
-  const tools=await rpc('tools/list',{});assert.equal(tools.result.tools.length,39);
+  const tools=await rpc('tools/list',{});assert.equal(tools.result.tools.length,85);
   const status=await call('status');assert(contains(status,'headless'));
   const languages=await call('list_languages');assert(contains(languages,'x86:LE:32:default'));assert(contains(languages,'tricore:LE:32:'));
   const x86=languages.languages.find(language=>language.id==='x86:LE:32:default');
@@ -60,14 +65,15 @@ try{
   const project=await call('create_project',{path:directory,name:`Synthetic_${stamp.replaceAll('-','')}`});
   const projectId=project.id;assert(projectId);
   await call('create_project',{path:directory,name:project.name},true);
-  const bytes=Buffer.alloc(256,0);bytes.set([0xb8,0x2a,0,0,0,0xc3]); // x86: mov eax,42; ret
+  const bytes=Buffer.alloc(1024,0);bytes.set([0xb8,0x2a,0,0,0,0xc3]); // x86: mov eax,42; ret
   bytes.write('REDLINE_SYNTHETIC',32,'ascii');for(let i=0;i<8;i++)bytes.writeUInt16LE(100+i*10,128+i*2);
+  populateResearchBytes(bytes);const fixture=researchFixture(bytes);
   const originalFile=join(directory,`original-${stamp}.bin`);await writeFile(originalFile,bytes);
   const modified=Buffer.from(bytes);modified[1]=46;const modifiedFile=join(directory,`modified-${stamp}.bin`);await writeFile(modifiedFile,modified);
   const imported=await call('import_program',{expected_project_id:projectId,path:originalFile,name:'Original',language_id:'x86:LE:32:default',compiler_spec_id:primaryCompiler.id,image_base:'00400000'});
   const programId=imported.id;assert(programId);assert.equal(imported.source_sha256,sha(bytes));assert.equal(imported.language_id,'x86:LE:32:default');assert.equal(imported.compiler_spec_id,primaryCompiler.id);
   const identity={expected_program_id:programId};
-  const read=await call('read_bytes',{...identity,address:'ram:00400000',count:256});assert.deepEqual(read.bytes,[...bytes]);
+  const read=await call('read_bytes',{...identity,address:'ram:00400000',count:bytes.length});assert.deepEqual(read.bytes,[...bytes]);
   await call('read_bytes',{expected_program_id:'stale-program',address:'ram:00400000',count:1},true);
   await call('read_bytes',{...identity,address:'ram:00401000',count:1},true);
   const mapping=await call('map_file_offset',{...identity,file_offset:128});assert(contains(mapping,'400080'));
@@ -93,6 +99,7 @@ try{
   await call('create_memory_block',{...identity,name:'SyntheticRAM',address:'ram:01000000',size:4096,read:true,write:true,execute:false});
   await call('create_memory_block',{...identity,name:'Overlap',address:'ram:01000000',size:4096,read:true,write:true,execute:false},true);
   const options=await call('get_analysis_options',identity);assert(Array.isArray(options.options));
+  await defineResearchFixture(call,identity);
   const booleanOption=options.options.find(option=>option.type==='BOOLEAN_TYPE');
   if(booleanOption)await call('set_analysis_options',{...identity,options:{[booleanOption.name]:booleanOption.value}});
   await call('set_analysis_options',{...identity,options:{'nonexistent-option':true}},true);
@@ -105,17 +112,41 @@ try{
   if(cancel.cancellation_requested)assert(cancelled.state!=='completed'||cancelled.error===undefined,'Completed job cannot carry a hidden failure');
   await call('save_program',identity);
   await checkInspectionTools(call, identity, 'ram:00400080', comment, bytes);
+  await checkResearchTools(call,identity,fixture);
+  await checkFlowTools(call,identity,fixture);
+  await checkTypeTools(call,identity,fixture);
+  await checkUtilityTools(call,identity,fixture);
+  await call('save_program',identity);
   const exported=join(directory,`synthetic-${stamp}.gzf`);await call('export_program',{...identity,path:exported});await call('export_program',{...identity,path:exported},true);
   const current=await call('import_program',{expected_project_id:projectId,path:modifiedFile,name:'Stage1',language_id:'x86:LE:32:default',compiler_spec_id:alternativeCompiler.id,image_base:'00400000'});
   assert.notEqual(current.id,programId);assert.equal(current.source_sha256,sha(modified));assert.equal(current.compiler_spec_id,alternativeCompiler.id);
   await call('read_bytes', {...identity,address:'ram:00400000',count:1},true);
+  const comparisonProgram=await call('import_program',{expected_project_id:projectId,path:modifiedFile,name:'Comparison',language_id:'x86:LE:32:default',compiler_spec_id:primaryCompiler.id,image_base:'00400000'});
+  const comparisonIdentity={expected_program_id:comparisonProgram.id};
+  await call('create_instructions',{...comparisonIdentity,address:'ram:00400000',length:6});
+  await call('create_function',{...comparisonIdentity,address:'ram:00400000',name:'modified_answer'});
+  await call('save_program',comparisonIdentity);
+  const activeOriginal=await call('select_program',{expected_project_id:projectId,program_path:'/Original'});
+  await checkSavedComparisons(call,{expected_program_id:activeOriginal.id},'/Comparison',sha(modified),bytes);
   // These bytes deliberately remain synthetic; this verifies processor/compiler import, not TriCore code semantics.
   const triProgram=await call('import_program',{expected_project_id:projectId,path:originalFile,name:'TriCoreChoice',language_id:tricore.id,compiler_spec_id:tricore.compilers[0].id,image_base:'80000000'});
   assert.equal(triProgram.language_id,tricore.id);assert.equal(triProgram.compiler_spec_id,tricore.compilers[0].id);
-  const triBytes=await call('read_bytes',{expected_program_id:triProgram.id,address:'ram:80000000',count:256});assert.deepEqual(triBytes.bytes,[...bytes]);
+  const triBytes=await call('read_bytes',{expected_program_id:triProgram.id,address:'ram:80000000',count:bytes.length});assert.deepEqual(triBytes.bytes,[...bytes]);
   const rebased=await call('set_image_base',{expected_program_id:triProgram.id,address:'ram:80010000'});
   assert(contains(rebased.image_base,'80010000'));assert(contains(await call('map_file_offset',{expected_program_id:triProgram.id,file_offset:128}),'80010080'));
   await call('save_program',{expected_program_id:triProgram.id});
+  // Generic TriCore imports as one block; chip-specific specs may add default memory blocks.
+  // The independent FlowTriCoreFixtureMain also exercises tc29x using a disposable ProgramDB.
+  const triLanguage=languages.languages.find(language=>language.id==='tricore:LE:32:default');
+  assert(triLanguage?.compilers.some(compiler=>compiler.id==='default'));
+  const triFixture=Buffer.from('82720b32002000000090','hex');
+  const triFixturePath=join(directory,`tricore-arithmetic-${stamp}.bin`);await writeFile(triFixturePath,triFixture);
+  const triArithmetic=await call('import_program',{expected_project_id:projectId,path:triFixturePath,name:'TriCoreArithmetic',language_id:triLanguage.id,compiler_spec_id:'default',image_base:'80000000'});
+  const triIdentity={expected_program_id:triArithmetic.id};
+  await call('create_instructions',{...triIdentity,address:'ram:80000000',length:triFixture.length});
+  await call('create_function',{...triIdentity,address:'ram:80000000',name:'synthetic_tricore_add'});
+  await call('save_program',triIdentity);
+  await checkTriCoreEmulation(call,triIdentity,{address:'ram:80000000',stop_address:'ram:80000006',byte_count:triFixture.length,registers:[{name:'d3',value:'5'},{name:'PSW',value:'0'}],output_register:'d2',expected_value:12});
   const programs=await call('list_programs',{expected_project_id:projectId});assert(contains(programs,'Original')&&contains(programs,'Stage1')&&!contains(programs,'BadLanguage')&&!contains(programs,'BadCompiler'));
   await call('select_program',{expected_project_id:projectId,program_path:'/Original'});
   const selected=await call('get_program');assert.equal(selected.source_sha256,sha(bytes));
@@ -123,8 +154,10 @@ try{
   await call('close_project',{expected_project_id:projectId});
   const reopened=await call('open_project',{path:directory,name:project.name});
   const reopenedProgram=await call('select_program',{expected_project_id:reopened.id,program_path:'/Original'});
-  const restored=await call('read_bytes',{expected_program_id:reopenedProgram.id,address:'ram:00400000',count:256});assert.deepEqual(restored.bytes,[...bytes]);
+  const restored=await call('read_bytes',{expected_program_id:reopenedProgram.id,address:'ram:00400000',count:bytes.length});assert.deepEqual(restored.bytes,[...bytes]);
   await checkInspectionTools(call, {expected_program_id:reopenedProgram.id}, 'ram:00400080', comment, bytes);
+  await checkTypePersistence(call,{expected_program_id:reopenedProgram.id},fixture);
+  await checkUtilityPersistence(call,{expected_program_id:reopenedProgram.id},fixture);
   assert(contains(await call('list_symbols',{expected_program_id:reopenedProgram.id,query:'synthetic_table'}),'synthetic_table'));
   const restoredFunction=await call('get_function',{expected_program_id:reopenedProgram.id,address:'ram:00400000'});assert.equal(restoredFunction.name,'answer_42');
   await call('go_to',{expected_program_id:reopenedProgram.id,address:'ram:00400000'},true);

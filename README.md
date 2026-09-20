@@ -2,7 +2,7 @@
 
 A Rust MCP server and Java Ghidra adapter for firmware analysis. It supports project creation, explicit language/compiler selection, raw binary import, native code analysis, annotations, and saved projects. It is a companion to [Redline WinOLS MCP](https://github.com/amirdauti/redline-autohaus-winols-mcp).
 
-The same 39 MCP tools connect to either a background Ghidra process or a GUI extension. The background process can create and open projects before a CodeBrowser exists. The GUI extension works with the project and selected program in its CodeBrowser; project creation/open/close are handled by the background mode.
+The same 85 MCP tools connect to either a background Ghidra process or a GUI extension. The background process can create and open projects before a CodeBrowser exists. The GUI extension works with the project and selected program in its CodeBrowser; project creation/open/close are handled by the background mode.
 
 ```mermaid
 flowchart LR
@@ -27,12 +27,19 @@ All tool names start with `ghidra_`.
 | Code | `list_functions`, `get_function`, `create_instructions`, `create_function`, `rename_function`, `disassemble`, `decompile`, `get_pcode` |
 | Data and comments | `get_data`, `get_comments` |
 | Search and annotations | `get_references`, `search_bytes`, `list_symbols`, `list_strings`, `define_data`, `set_label`, `set_comment`, `go_to` |
+| Graphs and instruction search | `get_function_details`, `get_control_flow`, `get_call_graph`, `find_call_paths`, `search_constants`, `search_instructions`, `search_pcode`, `get_references_range` |
+| Decompiler and data flow | `get_high_pcode`, `trace_data_flow`, `batch_decompile`, `batch_references`, `search_decompiled_code` |
+| Function comparison and emulation | `get_function_fingerprint`, `compare_functions`, `find_similar_functions`, `compare_saved_function`, `emulate_function` |
+| Variables and signatures | `get_function_variables`, `rename_variable`, `set_variable_type`, `set_function_signature` |
+| Structured types | `list_data_types`, `get_data_type`, `create_structure`, `set_structure_field`, `create_enum`, `create_union`, `create_typedef`, `apply_data_type`, `get_structure_field_references` |
+| Listing and memory inspection | `get_listing`, `hash_memory`, `preview_instructions`, `get_processor_context`, `set_processor_context`, `clear_listing`, `compare_program_memory` |
+| Research annotations | `list_bookmarks`, `set_bookmark`, `delete_bookmark`, `list_comments`, `batch_set_comments`, `get_function_tags`, `update_function_tags`, `batch_rename` |
 
 `list_languages` enumerates the installed languages and compatible compiler specifications. Import requires a language ID, compiler ID, and explicit image base. Choices are validated by Ghidra; a raw BIN is not assumed to describe its processor or memory layout.
 
-The server exposes a defined analysis workflow. It does not expose every Ghidra UI action, debugger, emulator, arbitrary script, or third-party extension. In particular, initial raw imports contain one contiguous block; additional uninitialized blocks model RAM. Analysis-option updates currently accept existing Boolean options, and data creation supports primitive scalars/arrays. See [the protocol and limits](docs/bridge-protocol.md).
+The server exposes typed native operations with bounded scans, pagination, stale-input checks, and transactional edits. Initial raw imports contain one contiguous block; additional uninitialized blocks model RAM. Named structures, unions, enums, typedefs, pointers and arrays can be created and applied to undefined storage. Analysis-option updates accept existing Boolean options. See [the protocol and limits](docs/bridge-protocol.md).
 
-`get_comments` reads all five stored comment types. `get_data` inspects an existing data definition and paginates its immediate components. `get_pcode` returns raw operations and varnodes for existing contiguous instructions, without applying flow overrides. These three tools work in both modes and leave bytes and analysis metadata unchanged. See [headless coverage and future tools](docs/headless-tools.md).
+`get_pcode` exposes raw instruction semantics; `get_high_pcode` and `trace_data_flow` expose decompiler SSA and bounded def-use relationships. Call graphs follow resolved database references. Comparison scores identify candidates and never prove semantic equivalence. `emulate_function` uses isolated state with explicit inputs and a stop address; it does not model an ECU, peripherals, or a live debugger. No operation accepts caller-supplied scripts or commits emulator bytes to firmware. See [headless coverage](docs/headless-tools.md), [graph/search contracts](docs/research-tools.md), [decompiler contracts](docs/flow-tools.md), [type editing](docs/type-tools.md), and [memory/annotation contracts](docs/utility-tools.md).
 
 ## Requirements
 

@@ -1,0 +1,186 @@
+[
+  {
+    "name": "ghidra_get_function_details",
+    "read_only": true
+  },
+  {
+    "name": "ghidra_get_control_flow",
+    "read_only": true
+  },
+  {
+    "name": "ghidra_get_call_graph",
+    "read_only": true
+  },
+  {
+    "name": "ghidra_find_call_paths",
+    "read_only": true
+  },
+  {
+    "name": "ghidra_search_constants",
+    "read_only": true
+  },
+  {
+    "name": "ghidra_search_instructions",
+    "read_only": true
+  },
+  {
+    "name": "ghidra_search_pcode",
+    "read_only": true
+  },
+  {
+    "name": "ghidra_get_references_range",
+    "read_only": true
+  },
+  {
+    "name": "ghidra_get_high_pcode",
+    "read_only": true
+  },
+  {
+    "name": "ghidra_trace_data_flow",
+    "read_only": true
+  },
+  {
+    "name": "ghidra_batch_decompile",
+    "read_only": true
+  },
+  {
+    "name": "ghidra_batch_references",
+    "read_only": true
+  },
+  {
+    "name": "ghidra_search_decompiled_code",
+    "read_only": true
+  },
+  {
+    "name": "ghidra_get_function_fingerprint",
+    "read_only": true
+  },
+  {
+    "name": "ghidra_compare_functions",
+    "read_only": true
+  },
+  {
+    "name": "ghidra_find_similar_functions",
+    "read_only": true
+  },
+  {
+    "name": "ghidra_emulate_function",
+    "read_only": true
+  },
+  {
+    "name": "ghidra_get_function_variables",
+    "read_only": true
+  },
+  {
+    "name": "ghidra_rename_variable",
+    "read_only": false
+  },
+  {
+    "name": "ghidra_set_variable_type",
+    "read_only": false
+  },
+  {
+    "name": "ghidra_set_function_signature",
+    "read_only": false
+  },
+  {
+    "name": "ghidra_list_data_types",
+    "read_only": true
+  },
+  {
+    "name": "ghidra_get_data_type",
+    "read_only": true
+  },
+  {
+    "name": "ghidra_create_structure",
+    "read_only": false
+  },
+  {
+    "name": "ghidra_set_structure_field",
+    "read_only": false
+  },
+  {
+    "name": "ghidra_create_enum",
+    "read_only": false
+  },
+  {
+    "name": "ghidra_create_union",
+    "read_only": false
+  },
+  {
+    "name": "ghidra_create_typedef",
+    "read_only": false
+  },
+  {
+    "name": "ghidra_apply_data_type",
+    "read_only": false
+  },
+  {
+    "name": "ghidra_get_structure_field_references",
+    "read_only": true
+  },
+  {
+    "name": "ghidra_get_listing",
+    "read_only": true
+  },
+  {
+    "name": "ghidra_hash_memory",
+    "read_only": true
+  },
+  {
+    "name": "ghidra_preview_instructions",
+    "read_only": true
+  },
+  {
+    "name": "ghidra_get_processor_context",
+    "read_only": true
+  },
+  {
+    "name": "ghidra_set_processor_context",
+    "read_only": false
+  },
+  {
+    "name": "ghidra_clear_listing",
+    "read_only": false
+  },
+  {
+    "name": "ghidra_list_bookmarks",
+    "read_only": true
+  },
+  {
+    "name": "ghidra_set_bookmark",
+    "read_only": false
+  },
+  {
+    "name": "ghidra_delete_bookmark",
+    "read_only": false
+  },
+  {
+    "name": "ghidra_list_comments",
+    "read_only": true
+  },
+  {
+    "name": "ghidra_batch_set_comments",
+    "read_only": false
+  },
+  {
+    "name": "ghidra_get_function_tags",
+    "read_only": true
+  },
+  {
+    "name": "ghidra_update_function_tags",
+    "read_only": false
+  },
+  {
+    "name": "ghidra_batch_rename",
+    "read_only": false
+  },
+  {
+    "name": "ghidra_compare_program_memory",
+    "read_only": true
+  },
+  {
+    "name": "ghidra_compare_saved_function",
+    "read_only": true
+  }
+]

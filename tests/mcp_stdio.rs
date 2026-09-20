@@ -344,7 +344,7 @@ fn arguments(operation: &str, root: &Path) -> Value {
 }
 
 #[tokio::test]
-async fn executable_negotiates_all_typed_tools_and_dispatches_over_the_mailbox() {
+async fn executable_negotiates_all_typed_tools_and_dispatches_core_over_the_mailbox() {
     let directory = tempfile::tempdir().unwrap();
     fs::write(directory.path().join("synthetic.bin"), [0x90, 0xc3, 0, 0])
         .await
@@ -358,50 +358,52 @@ async fn executable_negotiates_all_typed_tools_and_dispatches_over_the_mailbox()
         .map(|tool| tool["name"].as_str().unwrap())
         .collect();
     names.sort_unstable();
-    assert_eq!(
-        names,
-        [
-            "ghidra_analyze",
-            "ghidra_cancel_analysis",
-            "ghidra_close_project",
-            "ghidra_create_function",
-            "ghidra_create_instructions",
-            "ghidra_create_memory_block",
-            "ghidra_create_project",
-            "ghidra_decompile",
-            "ghidra_define_data",
-            "ghidra_disassemble",
-            "ghidra_export_program",
-            "ghidra_get_analysis_options",
-            "ghidra_get_comments",
-            "ghidra_get_data",
-            "ghidra_get_function",
-            "ghidra_get_pcode",
-            "ghidra_get_program",
-            "ghidra_get_project",
-            "ghidra_get_references",
-            "ghidra_go_to",
-            "ghidra_import_program",
-            "ghidra_job_status",
-            "ghidra_list_functions",
-            "ghidra_list_languages",
-            "ghidra_list_programs",
-            "ghidra_list_strings",
-            "ghidra_list_symbols",
-            "ghidra_map_file_offset",
-            "ghidra_open_project",
-            "ghidra_read_bytes",
-            "ghidra_rename_function",
-            "ghidra_save_program",
-            "ghidra_search_bytes",
-            "ghidra_select_program",
-            "ghidra_set_analysis_options",
-            "ghidra_set_comment",
-            "ghidra_set_image_base",
-            "ghidra_set_label",
-            "ghidra_status"
-        ]
-    );
+    let core_names = [
+        "ghidra_analyze",
+        "ghidra_cancel_analysis",
+        "ghidra_close_project",
+        "ghidra_create_function",
+        "ghidra_create_instructions",
+        "ghidra_create_memory_block",
+        "ghidra_create_project",
+        "ghidra_decompile",
+        "ghidra_define_data",
+        "ghidra_disassemble",
+        "ghidra_export_program",
+        "ghidra_get_analysis_options",
+        "ghidra_get_comments",
+        "ghidra_get_data",
+        "ghidra_get_function",
+        "ghidra_get_pcode",
+        "ghidra_get_program",
+        "ghidra_get_project",
+        "ghidra_get_references",
+        "ghidra_go_to",
+        "ghidra_import_program",
+        "ghidra_job_status",
+        "ghidra_list_functions",
+        "ghidra_list_languages",
+        "ghidra_list_programs",
+        "ghidra_list_strings",
+        "ghidra_list_symbols",
+        "ghidra_map_file_offset",
+        "ghidra_open_project",
+        "ghidra_read_bytes",
+        "ghidra_rename_function",
+        "ghidra_save_program",
+        "ghidra_search_bytes",
+        "ghidra_select_program",
+        "ghidra_set_analysis_options",
+        "ghidra_set_comment",
+        "ghidra_set_image_base",
+        "ghidra_set_label",
+        "ghidra_status",
+    ];
+    let expanded: Vec<Value> = serde_json::from_str(include_str!("expanded-tools.json")).unwrap();
+    let mut expected = core_names.to_vec();
+    expected.extend(expanded.iter().map(|tool| tool["name"].as_str().unwrap()));
+    expected.sort_unstable();
+    assert_eq!(names, expected);
     for tool in tools {
         assert_eq!(tool["inputSchema"]["type"], "object");
         assert_eq!(tool["inputSchema"]["additionalProperties"], false, "{tool}");
@@ -418,6 +420,23 @@ async fn executable_negotiates_all_typed_tools_and_dispatches_over_the_mailbox()
             );
         }
         let name = tool["name"].as_str().unwrap();
+        if let Some(contract) = expanded.iter().find(|entry| entry["name"] == name) {
+            assert_eq!(tool["annotations"]["readOnlyHint"], contract["read_only"]);
+            assert_eq!(
+                tool["annotations"]["destructiveHint"],
+                !contract["read_only"].as_bool().unwrap()
+            );
+            // Expanded operations are exercised against real Ghidra by both native harnesses.
+            // Here verify that invalid inputs stop before the synthetic mailbox peer.
+            let rejected = client
+                .call_raw(name, json!({"unexpected_field": true}))
+                .await;
+            assert!(
+                rejected.get("error").is_some() || rejected["result"]["isError"] == true,
+                "{rejected}"
+            );
+            continue;
+        }
         if ["ghidra_get_comments", "ghidra_get_data", "ghidra_get_pcode"].contains(&name) {
             assert_eq!(tool["annotations"]["readOnlyHint"], true);
             assert_eq!(tool["annotations"]["destructiveHint"], false);
@@ -544,7 +563,7 @@ async fn discovery_survives_offline_bridge_and_same_client_connects_after_manual
     let directory = tempfile::tempdir().unwrap();
     let mut client = Client::start(directory.path()).await;
     let listed = client.rpc("tools/list", json!({})).await;
-    assert_eq!(listed["result"]["tools"].as_array().unwrap().len(), 39);
+    assert_eq!(listed["result"]["tools"].as_array().unwrap().len(), 85);
     assert!(!directory.path().join("client.lock").exists());
     client
         .tool_error("ghidra_status", json!({}), "bridge is not running")

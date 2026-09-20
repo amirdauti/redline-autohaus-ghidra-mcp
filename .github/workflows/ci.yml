@@ -94,6 +94,9 @@ jobs:
           rustup show
           cargo build --locked --release
           if ($LASTEXITCODE -ne 0) { throw 'Rust release build failed' }
+      - name: Verify synthetic TC29x arithmetic in isolated emulator
+        shell: pwsh
+        run: ./scripts/test-tricore.ps1 -GhidraHome $env:GHIDRA_INSTALL_DIR -JavaHome $env:JAVA_HOME -WorkRoot (Join-Path $env:NATIVE_WORK_ROOT 'tricore')
       - name: Exercise automatic startup and native project lifecycle
         shell: pwsh
         run: |
